@@ -1,20 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>Deriv EMA Crossover</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
-<style>
-body {margin:0;font-family:sans-serif;background:#0f172a;color:#e5e7eb;}
-header{display:flex;justify-content:space-between;align-items:center;padding:1rem;background:#111827;border-bottom:1px solid #1f2937;}
-main{display:grid;grid-template-columns:240px 1fr;gap:1rem;padding:1rem;}
-aside{background:#111827;padding:1rem;border-radius:8px;}
-#chart{height:70vh;}
-.feed{font-size:0.85rem;margin-top:1rem;max-height:200px;overflow-y:auto;background:#1f2937;padding:0.5rem;border-radius:6px;}
-.feed .item{display:flex;justify-content:space-between;padding:0.25rem 0;border-bottom:1px dashed #374151;}
-.buy{color:#16a34a;}.sell{color:#dc2626;}
-</style>
+  <meta charset="UTF-8" />
+  <title>Deriv EMA Crossover</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    body { margin:0; font-family:sans-serif; background:#0f172a; color:#e5e7eb; }
+    header { display:flex; justify-content:space-between; align-items:center; padding:1rem; background:#111827; border-bottom:1px solid #1f2937; }
+    main { display:grid; grid-template-columns:240px 1fr; gap:1rem; padding:1rem; }
+    aside { background:#111827; padding:1rem; border-radius:8px; }
+    #chart { height:70vh; }
+    .feed { font-size:0.85rem; margin-top:1rem; max-height:200px; overflow-y:auto; background:#1f2937; padding:0.5rem; border-radius:6px; }
+    .feed .item { display:flex; justify-content:space-between; padding:0.25rem 0; border-bottom:1px dashed #374151; }
+    .buy { color:#16a34a; } .sell { color:#dc2626; }
+  </style>
 </head>
 <body>
 <header>
@@ -165,7 +165,7 @@ function onMessage(ev){
     el.symbolSelect.innerHTML = '';
     syms.forEach(s => {
       const opt = document.createElement('option');
-      opt.value =opt.value = s.symbol;
+      opt.value = s.symbol;
       opt.textContent = s.display_name;
       el.symbolSelect.appendChild(opt);
     });
@@ -173,7 +173,8 @@ function onMessage(ev){
     if (syms.length > 0) setSymbol(syms[0].symbol);
   }
 
-  if (data.msg_type === 'candles' || data.msg_type === 'ohlc') {
+  if (data.msg_type === 'candles'
+      || data.msg_type === 'ohlc') {
     const arr = data.candles || [data.ohlc];
     arr.forEach(c => {
       const latest = {
@@ -196,7 +197,6 @@ function onMessage(ev){
 // Event listeners
 // ---------------------------
 el.symbolSelect.addEventListener('change', e => setSymbol(e.target.value));
-
 el.applyBtn.addEventListener('click', () => {
   emaFastPeriod = parseInt(el.emaFast.value) || 5;
   emaSlowPeriod = parseInt(el.emaSlow.value) || 20;
