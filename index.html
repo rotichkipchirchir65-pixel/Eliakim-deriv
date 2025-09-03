@@ -85,7 +85,6 @@ function connectWS(token){
 }
 function send(msg){if(ws && ws.readyState===1) ws.send(JSON.stringify(msg));}
 
-// Normal BUY beep
 function beepBuy(){
   if(!el.soundToggle.checked) return;
   const ctx=new (window.AudioContext||window.webkitAudioContext)();
@@ -96,8 +95,6 @@ function beepBuy(){
   g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.15);
   o.start(); o.stop(ctx.currentTime+0.18);
 }
-
-// Extreme SELL alert
 function beepSell(){
   if(!el.soundToggle.checked) return;
   const ctx=new (window.AudioContext||window.webkitAudioContext)();
@@ -129,8 +126,8 @@ function detectCrossover(pf,ps,f,s){
 function initChart(){
   chart=LightweightCharts.createChart(el.chart,{layout:{background:{color:'#0f172a'},textColor:'#e5e7eb'},grid:{vertLines:{color:'#1f2937'},horzLines:{color:'#1f2937'}}});
   candleSeries=chart.addCandlestickSeries();
-  emaFastSeries=chart.addLineSeries({color:'#16a34a',lineWidth:2}); // green
-  emaSlowSeries=chart.addLineSeries({color:'#dc2626',lineWidth:2}); // red
+  emaFastSeries=chart.addLineSeries({color:'#16a34a',lineWidth:2});
+  emaSlowSeries=chart.addLineSeries({color:'#dc2626',lineWidth:2});
 }
 function updateChart(){
   const data=candleBuffer.map(c=>({time:c.epoch,open:+c.open,high:+c.high,low:+c.low,close:+c.close}));
@@ -151,7 +148,6 @@ function updateChart(){
         shape:'circle',
         text:signal.toUpperCase()
       });
-      // Sound + feed
       const price=data[i].close;
       const item=document.createElement('div');
       item.className=`item ${signal}`;
@@ -173,7 +169,6 @@ function updateChart(){
     const diffNow = ef[len - 1] - es[len - 1];
     const diffPrev = ef[len - 2] - es[len - 2];
     if (diffPrev > 0 && diffNow > 0 && diffNow < Math.abs(data[len - 1].close * 0.0005)) {
-      // Very close to crossing down
       beepSell();
     }
   }
