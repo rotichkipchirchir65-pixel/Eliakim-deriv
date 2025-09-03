@@ -84,7 +84,9 @@ function connectWS(token){
   ws.onmessage=onMessage;
 }
 function send(msg){if(ws && ws.readyState===1) ws.send(JSON.stringify(msg));}
-function beep(){
+
+// Normal BUY beep
+function beepBuy(){
   if(!el.soundToggle.checked) return;
   const ctx=new (window.AudioContext||window.webkitAudioContext)();
   const o=ctx.createOscillator(), g=ctx.createGain();
@@ -94,6 +96,19 @@ function beep(){
   g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.15);
   o.start(); o.stop(ctx.currentTime+0.18);
 }
+
+// Extreme SELL alert
+function beepSell(){
+  if(!el.soundToggle.checked) return;
+  const ctx=new (window.AudioContext||window.webkitAudioContext)();
+  const o=ctx.createOscillator(), g=ctx.createGain();
+  o.type='square'; o.frequency.value=220; o.connect(g); g.connect(ctx.destination);
+  g.gain.setValueAtTime(0.001,ctx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.5,ctx.currentTime+0.01);
+  g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.5);
+  o.start(); o.stop(ctx.currentTime+0.55);
+}
+
 function computeEMA(values, period){
   const alpha=2/(period+1), out=new Array(values.length).fill(null);
   if(values.length<period) return out;
@@ -114,8 +129,8 @@ function detectCrossover(pf,ps,f,s){
 function initChart(){
   chart=LightweightCharts.createChart(el.chart,{layout:{background:{color:'#0f172a'},textColor:'#e5e7eb'},grid:{vertLines:{color:'#1f2937'},horzLines:{color:'#1f2937'}}});
   candleSeries=chart.addCandlestickSeries();
-  emaFastSeries=chart.addLineSeries({color:'#22d3ee',lineWidth:2});
-  emaSlowSeries=chart.addLineSeries({color:'#f59e0b',lineWidth:2});
+  emaFastSeries=chart.addLineSeries({color:'#16a34a',lineWidth:2}); // green
+  emaSlowSeries=chart.addLineSeries({color:'#dc2626',lineWidth:2}); // red
 }
 function updateChart(){
   const data=candleBuffer.map(c=>({time:c.epoch,open:+c.open,high:+c.high,low:+c.low,close:+c.close}));
@@ -124,40 +139,81 @@ function updateChart(){
   const ef=computeEMA(closes,emaFastPeriod), es=computeEMA(closes,emaSlowPeriod);
   emaFastSeries.setData(data.map((c,i)=>({time:c.time,value:ef[i]})));
   emaSlowSeries.setData(data.map((c,i)=>({time:c.time,value:es[i]})));
-  const i=data.length-1;
-  const signal=detectCrossover(ef[i-1],es[i-1],ef[i],es[i]);
-  if(signal){
-    const item=document.createElement('div');
-    item.className=`item ${signal}`;
-    item.innerHTML=`<span>${new Date(data[i].time*1000).toLocaleTimeString()}</span>
-                    <span>${activeSymbol} @ ${data[i].close}</span>
-                    <span class="${signal}">${signal.toUpperCase()}</span>`;
-    el.feed.prepend(item);
-    beep();
-  }
-}
-function setSymbol(symbol){
-  activeSymbol=symbol;
-  candleBuffer=[];
-  send({ticks_history:symbol,adjust_start_time:1,count:HISTORY_COUNT,granularity:GRANULARITY,style:'candles',subscribe:1});
-}
-function onMessage(ev){
-  const data=JSON.parse(ev.data);
-  if(data.error) return console.error(data.error.message);
-  if(data.msg_type==='authorize'){
-    el.accountChip.style.display='inline';
-    el.loginBtn.style.display='none';
-    el.logoutBtn.style.display='inline';
-    send({active_symbols:'full',product_type:'basic'});
-  }
-  if(data.msg_type==='active_symbols'){
-    const syms=data.active_symbols.filter(s=>/Volatility/i.test(s.display_name));
-    el.symbolSelect.innerHTML='';
-    syms.forEach(s=>{
-      const opt=document.createElement('option');
-      opt.value=s.symbol; opt.textContent=s.display_name;
-      el.symbolSelect.appendChild(opt);
+
+  const markers=[];
+  for(let i=1;i<data.length;i++){
+    const signal=detectCrossover(ef[i-1],es[i-1],ef[i],es[i]);
+    if(signal){
+      markers.push({
+        time:data[i].time,
+        position:signal==='buy'?'belowBar':'aboveBar',
+        color:signal==='buy'?'#16a34a':'#dc2626',
+        shape:'circle',
+        text:signal.toUpperCase()
       });
+      // Sound + feed
+      const price=data[i].close;
+      const item=document.createElement('div');
+      item.className=`item ${signal}`;
+      item.innerHTML=`<span>${new Date(data[i].time*1000).toLocaleTimeString()}</span>
+                      <span>${activeSymbol} @ ${price}</span>
+                      <span class="${signal}">${signal.toUpperCase()}</span>`;
+      el.feed.prepend(item);
+      if (signal === 'buy') {
+        beepBuy();
+      } else {
+        beepSell();
+      }
+    }
+  }
+
+  // Pre‑cross SELL warning: if fast EMA is just above slow EMA and about to cross down
+  const len = data.length;
+  if (len >= 2) {
+    const diffNow = ef[len - 1] - es[len - 1];
+    const diffPrev = ef[len - 2] - es[len - 2];
+    if (diffPrev > 0 && diffNow > 0 && diffNow < Math.abs(data[len - 1].close * 0.0005)) {
+      // Very close to crossing down
+      beepSell();
+    }
+  }
+
+  candleSeries.setMarkers(markers);
+}
+
+function setSymbol(symbol){
+  activeSymbol = symbol;
+  candleBuffer = [];
+  send({
+    ticks_history: symbol,
+    adjust_start_time: 1,
+    count: HISTORY_COUNT,
+    granularity: GRANULARITY,
+    style: 'candles',
+    subscribe: 1
+  });
+}
+
+function onMessage(ev){
+  const data = JSON.parse(ev.data);
+  if (data.error) return console.error(data.error.message);
+
+  if (data.msg_type === 'authorize') {
+    el.accountChip.style.display = 'inline';
+    el.loginBtn.style.display = 'none';
+    el.logoutBtn.style.display = 'inline';
+    send({ active_symbols: 'full', product_type: 'basic' });
+  }
+
+  if (data.msg_type === 'active_symbols') {
+    const syms = data.active_symbols.filter(s => /Volatility/i.test(s.display_name));
+    el.symbolSelect.innerHTML = '';
+    syms.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.symbol;
+      opt.textContent = s.display_name;
+      el.symbolSelect.appendChild(opt);
+    });
     el.symbolSelect.disabled = false;
     if (syms.length > 0) setSymbol(syms[0].symbol);
   }
