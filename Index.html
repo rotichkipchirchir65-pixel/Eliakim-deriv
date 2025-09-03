@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Deriv EMA Cross + Sell/Exit Alerts (Token Only)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0e0f13;
+    --card: #181b22;
+    --text: #e8eef8;
+    --muted: #9aa4b2;
+    --accent: #00e5ff;
+    --sell: #ff4d4f;
+    --exit: #ff9f1a;
+    --line: #0f0;
+    --ema-fast: #ffd400;
+    --ema-slow: #ff00ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, Arial, sans-serif; background: var(--bg); color: var(--text); }
+  h1 { text-align: center; color: var(--accent); font-size: 1.2rem; margin: 12px 8px; }
+  #controls {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center;
+    padding: 8px; background: #0a0b0e; position: sticky; top: 0; z-index: 10; border-bottom: 1px solid #1f2330;
+  }
+  #controls input, #controls button {
+    padding: 8px 10px; border-radius: 6px; border: 1px solid #2a2f3b; background: var(--card); color: var(--text);
+  }
+  #controls input { min-width: 240px; max-width: 70vw; }
+  #status { text-align: center; font-size: 0.9rem; color: var(--muted); padding: 6px 10px; }
+  #dashboard { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; padding: 10px; }
+  .card { background: var(--card); padding: 10px; border-radius: 8px; border: 1px solid #222838; position: relative; overflow: hidden; }
+  .header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  .symbol { font-weight: 700; font-size: 1rem; letter-spacing: 0.2px; }
+  .price { font-size: 0.95rem; color: var(--muted); }
+  .meta { font-size: 0.8rem; color: var(--muted); display: flex; gap: 10px; margin: 6px 0; }
+  canvas { width: 100%; height: 120px; display: block; background: #05060a; border-radius: 6px; }
+  .flash-up { animation: flashGreen 450ms; }
+  .flash-down { animation: flashRed 450ms; }
+  @keyframes flashGreen { from { box-shadow: inset 0 0 0 9999px rgba(0,255,0,0.18);} to { box-shadow: inset 0 0 0 0 rgba(0,0,0,0);} }
+  @keyframes flashRed { from { box-shadow: inset 0 0 0 9999px rgba(255,0,0,0.18);} to { box-shadow: inset 0 0 0 0 rgba(0,0,0,0);} }
+  #alerts { background: #04060a; padding: 10px; margin: 10px; border-radius: 8px; border: 1px solid #1f2330; max-height: 40vh; overflow: auto; }
+  .alert { font-size: 0.95rem; font-weight: 700; margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: #10131b; border: 1px solid #232a3d;}
+  .sell { color: var(--sell); border-color: #3a2021; background: #180e0e; }
+  .exit { color: var(--exit); border-color: #3a2d1f; background: #1b1309; }
+  .row { display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; }
+  .note { font-size: 0.8rem; color: var(--muted); }
+  .toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--muted); }
+  .small { font-size: 0.8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>EMA Cross Dashboard — Volatility Indices (Token Only)</h1>
+
+<div id="controls">
+  <input id="apiToken" type="password" placeholder="Paste your Deriv API token" />
+  <button id="loginBtn">Connect</button>
+  <button id="logoutBtn">Logout</button>
+  <span class="toggle"><input id="soundToggle" type="checkbox" checked /> Enable sound</span>
+  <span class="toggle"><input id="emaOverlay" type="checkbox" checked /> Show EMA overlay</span>
+  <span class="toggle">
+    Stop-loss %:
+    <input id="stopLossPct" type="number" step="0.05" min="0.05" value="0.3" style="width:80px" />
+  </span>
+  <span class="toggle">
+    EMA fast/slow:
+    <input id="emaFast" type="number" min="2" value="5" style="width:60px" />
+    <input id="emaSlow" type="number" min="5" value="20" style="width:60px" />
+  </span>
+</div>
+
+<div id="status">Disconnected</div>
+
+<div id="alerts">
+  <div class="note">Alerts will appear here. SELL = EMA fast crosses below EMA slow. EXIT = price drops by your stop-loss % from last high.</div>
+</div>
+
+<div id="dashboard" class="grid"></div>
+
+<audio id="sellSound" preload="auto" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"></audio>
+<audio id="exitSound" preload="auto" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"></audio>
+
+<script>
+(() => {
+  // ----------- State -----------
+  let ws = null;
+  let reconnectTimer = null;
+  let reconnectDelay = 3000;
+  let authorized = false;
+
+  const symbols = [];
+  const charts = {};   // { symbol: { ctx, data: [], w, h } }
+  const prices = {};   // { symbol: number[] }
+  const emas = {};     // { symbol: { fast, slow, prevFast, prevSlow } }
+  const lastHigh = {}; // { symbol: number }
+  const alertState = {}; // { symbol: 'sell' | 'exit' | null }
+  const subs = new Set();
+
+  // ----------- Elements -----------
+  const apiTokenEl = document.getElementById('apiToken');
+  const loginBtn = document.getElementById('loginBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const statusEl = document.getElementById('status');
+  const dashboardEl = document.getElementById('dashboard');
+  const alertsEl = document.getElementById('alerts');
+  const soundToggle = document.getElementById('soundToggle');
+  const emaOverlayEl = document.getElementById('emaOverlay');
+  const stopLossPctEl = document.getElementById('stopLossPct');
+  const emaFastEl = document.getElementById('emaFast');
+  const emaSlowEl = document.getElementById('emaSlow');
+  const sellSound = document.getElementById('sellSound');
+  const exitSound = document.getElementById('exitSound');
+
+  // Restore settings
+  apiTokenEl.value = localStorage.getItem('derivToken') || '';
+  soundToggle.checked = JSON.parse(localStorage.getItem('soundOn') ?? 'true');
+  emaOverlayEl.checked = JSON.parse(localStorage.getItem('emaOverlay') ?? 'true');
+  stopLossPctEl.value = localStorage.getItem('stopLossPct') || '0.3';
+  emaFastEl.value = localStorage.getItem('emaFast') || '5';
+  emaSlowEl.value = localStorage.getItem('emaSlow') || '20';
+
+  soundToggle.addEventListener('change', () => {
+    localStorage.setItem('soundOn', soundToggle.checked ? 'true' : 'false');
+  });
+  emaOverlayEl.addEventListener('change', () => {
+    localStorage.setItem('emaOverlay', emaOverlayEl.checked ? 'true' : 'false');
+    requestAnimationFrame(redrawAll);
+  });
+  stopLossPctEl.addEventListener('input', () => localStorage.setItem('stopLossPct', stopLossPctEl.value));
+  emaFastEl.addEventListener('input', () => localStorage.setItem('emaFast', emaFastEl.value));
+  emaSlowEl.addEventListener('input', () => localStorage.setItem('emaSlow', emaSlowEl.value));
+
+  // ----------- Utils -----------
+  function setStatus(text) {
+    statusEl.textContent = text;
+  }
+
+  function ema(prevEMA, price, period) {
+    const k = 2 / (period + 1);
+    return prevEMA == null ? price : price * k + prevEMA * (1 - k);
+  }
+
+  function formatPct(p) {
+    if (!isFinite(p)) return '';
+    return (p >= 0 ? '+' : '') + p.toFixed(2) + '%';
+  }
+
+  function flashCard(symbol, dir) {
+    const card = document.getElementById(`card-${symbol}`);
+    if (!card) return;
+    card.classList.remove('flash-up', 'flash-down');
+    void card.offsetWidth; // reflow to restart animation
+    card.classList.add(dir === 'up' ? 'flash-up' : 'flash-down');
+  }
+
+  function playSound(kind) {
+    if (!soundToggle.checked) return;
+    const el = kind === 'sell' ? sellSound : exitSound;
+    el.currentTime = 0;
+    el.play().catch(() => { /* ignore autoplay restrictions */ });
+  }
+
+  function showAlert(symbol, type, extra='') {
+    if (alertState[symbol] === type) return; // dedupe
+    alertState[symbol] = type;
+
+    const div = document.createElement('div');
+    div.className = `alert ${type}`;
+    div.textContent = `${symbol} → ${type === 'sell' ? 'SELL NOW' : 'EXIT TO AVOID LOSS'} ${extra}`;
+    alertsEl.prepend(div);
+    playSound(type);
+  }
+
+  function createCard(symbol, display_name) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.id = `card-${symbol}`;
+    card.innerHTML = `
+      <div class="header">
+        <div class="symbol">${display_name || symbol}</div>
+        <div class="price" id="price-${symbol}">--</div>
+      </div>
+      <div class="meta">
+        <div id="meta-${symbol}">EMA Δ: -- | Drop: --</div>
+      </div>
+      <canvas id="chart-${symbol}" height="140"></canvas>
+    `;
+    dashboardEl.appendChild(card);
+
+    const canvas = document.getElementById(`chart-${symbol}`);
+    const ctx = canvas.getContext('2d');
+    charts[symbol] = { ctx, data: [], canvas };
+
+    resizeCanvasToElement(canvas);
+    window.addEventListener('resize', () => resizeCanvasToElement(canvas));
+  }
+
+  function resizeCanvasToElement(canvas) {
+    const ratio = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.max(300, Math.floor(rect.width * ratio));
+    canvas.height = Math.floor(120 * ratio);
+    redrawAll();
+  }
+
+  function redrawAll() {
+    for (const s of symbols) drawChart(s);
+  }
+
+  function drawSeries(ctx, arr, color, min, max) {
+    if (arr.length < 2) return;
+    const W = ctx.canvas.width;
+    const H = ctx.canvas.height;
+    const len = arr.length;
+    const range = max - min || 1e-9;
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    for (let i = 0; i < len; i++) {
+      const x = (i / (len - 1)) * (W - 2) + 1;
+      const y = H - ((arr[i] - min) / range) * (H - 2) - 1;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  function drawChart(symbol) {
+    const chart = charts[symbol];
+    if (!chart) return;
+    const { ctx } = chart;
+    const data = prices[symbol] || [];
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    if (data.length < 2) return;
+
+    const min = Math.min(...data);
+    const max = Math.max(...data);
+
+    // Price line
+    drawSeries(ctx, data, getComputedStyle(document.documentElement).getPropertyValue('--line') || '#0f0', min, max);
+
+    // EMAs overlay (optional)
+    if (emaOverlayEl.checked) {
+      const fastP = Math.max(2, parseInt(emaFastEl.value || '5', 10));
+      const slowP = Math.max(fastP + 1, parseInt(emaSlowEl.value || '20', 10));
+      let f = null, s = null;
+      const fArr = [], sArr = [];
+      for (const p of data) {
+        f = ema(f, p, fastP);
+        s = ema(s, p, slowP);
+        fArr.push(f);
+        sArr.push(s);
+      }
+      drawSeries(ctx, fArr, getComputedStyle(document.documentElement).getPropertyValue('--ema-fast') || '#ffd400', min, max);
+      drawSeries(ctx, sArr, getComputedStyle(document.documentElement).getPropertyValue('--ema-slow') || '#ff00ff', min, max);
+    }
+  }
+
+  function updateMeta(symbol, quote) {
+    const metaEl = document.getElementById(`meta-${symbol}`);
+    const priceEl = document.getElementById(`price-${symbol}`);
+    if (!metaEl || !priceEl) return;
+
+    const fast = emas[symbol]?.fast ?? null;
+    const slow = emas[symbol]?.slow ?? null;
+    const delta = (fast != null && slow != null) ? ((fast - slow) / slow) * 100 : null;
+
+    if (!lastHigh[symbol] || quote > lastHigh[symbol]) lastHigh[symbol] = quote;
+    const dropPct = lastHigh[symbol] ? ((lastHigh[symbol] - quote) / lastHigh[symbol]) * 100 : 0;
+
+    priceEl.textContent = quote.toFixed(5);
+    metaEl.textContent = `EMA Δ: ${delta != null && isFinite(delta) ? formatPct(delta) : '--'} | Drop: ${isFinite(dropPct) ? dropPct.toFixed(2) + '%' : '--'}`;
+  }
+
+  // ----------- WebSocket Flow -----------
+  function connectWS() {
+    const token = apiTokenEl.value.trim();
+    if (!token) { setStatus('Token required'); return; }
+
+    // Warm up audio on user gesture for mobile browsers
+    if (soundToggle.checked) {
+      sellSound.play().then(() => { sellSound.pause(); sellSound.currentTime = 0; })
+        .catch(() => {/* ignore */});
+    }
+
+    clearTimeout(reconnectTimer);
+    if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+
+    setStatus('Connecting…');
+    ws = new WebSocket('wss://ws.derivws.com/websockets/v3');
+
+    ws.onopen = () => {
+      setStatus('Authorizing…');
+      ws.send(JSON.stringify({ authorize: token }));
+    };
+
+    ws.onmessage = (msg) => {
+      const data = JSON.parse(msg.data);
+
+      if (data.error) {
+        setStatus('Error: ' + data.error.message);
+        return;
+      }
+
+      if (data.msg_type === 'authorize') {
+        authorized = true;
+        localStorage.setItem('derivToken', token);
+        setStatus('Authorized. Loading symbols…');
+        ws.send(JSON.stringify({ active_symbols: 'brief', product_type: 'basic' }));
+        return;
+      }
+
+      if (data.msg_type === 'active_symbols' && Array.isArray(data.active_symbols)) {
+        const list = data.active_symbols
+          .filter(s => (s.display_name || '').toLowerCase().includes('volatility'))
+          .sort((a, b) => (a.display_name || a.symbol).localeCompare(b.display_name || b.symbol));
+
+        for (const s of list) {
+          if (!symbols.includes(s.symbol)) {
+            symbols.push(s.symbol);
+            createCard(s.symbol, s.display_name);
+            subscribeTicks(s.symbol);
+          }
+        }
+        setStatus(`Streaming: ${symbols.length} volatility indices`);
+        return;
+      }
+
+      if (data.msg_type === 'tick' && data.tick) {
+        const { symbol, quote } = data.tick;
+        handleTick(symbol, Number(quote));
+        return;
+      }
+    };
+
+    ws.onclose = () => {
+      authorized = false;
+      setStatus('Disconnected. Reconnecting…');
+      reconnectTimer = setTimeout(connectWS, reconnectDelay);
+    };
+
+    ws.onerror = () => {
+      setStatus('Connection error.');
+    };
+  }
+
+  function subscribeTicks(symbol) {
+    if (subs.has(symbol)) return;
+    subs.add(symbol);
+    ws?.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
+  }
+
+  function handleTick(symbol, quote) {
+    // Series buffer
+    if (!prices[symbol]) prices[symbol] = [];
+    prices[symbol].push(quote);
+    if (prices[symbol].length > 300) prices[symbol].shift();
+
+    // EMA update
+    const fastP = Math.max(2, parseInt(emaFastEl.value || '5', 10));
+    const slowP = Math.max(fastP + 1, parseInt(emaSlowEl.value || '20', 10));
+    if (!emas[symbol]) emas[symbol] = { fast: null, slow: null, prevFast: null, prevSlow: null };
+
+    emas[symbol].prevFast = emas[symbol].fast;
+    emas[symbol].prevSlow = emas[symbol].slow;
+    emas[symbol].fast = ema(emas[symbol].fast, quote, fastP);
+    emas[symbol].slow = ema(emas[symbol].slow, quote, slowP);
+
+    // Last high tracking for stop-loss exit
+    if (!lastHigh[symbol] || quote > lastHigh[symbol]) lastHigh[symbol] = quote;
+
+    // SELL: fast crosses below slow
+    if (emas[symbol].prevFast != null && emas[symbol].prevSlow != null) {
+      const crossedDown = emas[symbol].prevFast > emas[symbol].prevSlow && emas[symbol].fast < emas[symbol].slow;
+      if (crossedDown) {
+        flashCard(symbol, 'down');
+        showAlert(symbol, 'sell');
+      }
+    }
+
+    // EXIT: drop >= stopLossPct from last high
+    const stopLossPct = Math.max(0.01, parseFloat(stopLossPctEl.value || '0.3'));
+    const dropPct = lastHigh[symbol] ? ((lastHigh[symbol] - quote) / lastHigh[symbol]) * 100 : 0;
+    if (lastHigh[symbol] && dropPct >= stopLossPct) {
+      showAlert(symbol, 'exit', `(−${dropPct.toFixed(2)}%)`);
+      // Reset lastHigh to current quote so future exits need a new high
+      lastHigh[symbol] = quote;
+    }
+
+    // Update UI
+    updateMeta(symbol, quote);
+    drawChart(symbol);
+  }
+
+  function logout() {
+    localStorage.removeItem('derivToken');
+    setStatus('Logged out.');
+    if (ws && ws.readyState <= 1) ws.close();
+    // Clear UI
+    dashboardEl.innerHTML = '';
+    alertsEl.innerHTML = '<div class="note">Alerts will appear here. SELL = EMA fast crosses below EMA slow. EXIT = price drops by your stop-loss % from last high.</div>';
+    symbols.length = 0;
+    subs.clear();
+    for (const k of Object.keys(prices)) delete prices[k];
+    for (const k of Object.keys(emas)) delete emas[k];
+    for (const k of Object.keys(lastHigh)) delete lastHigh[k];
+    for (const k of Object.keys(alertState)) delete alertState[k];
+  }
+
+  // ----------- Events -----------
+  loginBtn.addEventListener('click', connectWS);
+  logoutBtn.addEventListener('click', logout);
+
+  // Optional: auto-connect if token saved
+  if (apiTokenEl.value) {
+    setTimeout(() => setStatus('Ready. Paste token or press Connect to resume.'), 0);
+  } else {
+    setStatus('Paste your token and press Connect.');
+  }
+})();
+</script>
+</body>
+</html>
