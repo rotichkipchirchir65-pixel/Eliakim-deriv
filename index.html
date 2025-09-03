@@ -8,7 +8,6 @@
 <style>
 body {margin:0;font-family:sans-serif;background:#0f172a;color:#e5e7eb;}
 header{display:flex;justify-content:space-between;align-items:center;padding:1rem;background:#111827;border-bottom:1px solid #1f2937;}
-.controls button,select,input{margin-left:0.5rem;padding:0.4rem 0.6rem;border-radius:6px;border:1px solid #374151;background:#1f2937;color:#e5e7eb;}
 main{display:grid;grid-template-columns:240px 1fr;gap:1rem;padding:1rem;}
 aside{background:#111827;padding:1rem;border-radius:8px;}
 #chart{height:70vh;}
@@ -20,11 +19,6 @@ aside{background:#111827;padding:1rem;border-radius:8px;}
 <body>
 <header>
   <div><strong>Deriv EMA Crossover</strong></div>
-  <div class="controls">
-    <button id="loginBtn">Login with Deriv</button>
-    <button id="logoutBtn" style="display:none;">Logout</button>
-    <span id="accountChip" style="display:none;">✅ Authorized</span>
-  </div>
 </header>
 <main>
   <aside>
@@ -45,7 +39,7 @@ aside{background:#111827;padding:1rem;border-radius:8px;}
 
 <script>
 const APP_ID = 99120;
-const REDIRECT_URI = "https://eliakim-deriv.vercel.app/";
+const API_TOKEN = "lKcYGLpmaAMgUkH";
 const WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`;
 const GRANULARITY = 60, HISTORY_COUNT = 500;
 
@@ -53,9 +47,6 @@ let ws, activeSymbol=null, emaFastPeriod=5, emaSlowPeriod=20;
 let chart, candleSeries, emaFastSeries, emaSlowSeries, candleBuffer=[];
 
 const el = {
-  loginBtn: document.getElementById('loginBtn'),
-  logoutBtn: document.getElementById('logoutBtn'),
-  accountChip: document.getElementById('accountChip'),
   symbolSelect: document.getElementById('symbolSelect'),
   emaFast: document.getElementById('emaFast'),
   emaSlow: document.getElementById('emaSlow'),
@@ -65,22 +56,9 @@ const el = {
   feed: document.getElementById('feed')
 };
 
-function parseParams(){
-  const params=new URLSearchParams(window.location.search);
-  const hash=new URLSearchParams(window.location.hash.replace(/^#/,''));
-  const out={}; for(const [k,v] of params) out[k]=v; for(const [k,v] of hash) out[k]=v;
-  return out;
-}
-function extractToken(parsed){
-  for(const k of Object.keys(parsed)){
-    if(/^token\d*$/.test(k) || ['token','access_token','auth_token','code'].includes(k)) return parsed[k];
-  }
-  return null;
-}
-function sanitizeURL(){history.replaceState({},document.title,location.pathname);}
-function connectWS(token){
+function connectWS(){
   ws=new WebSocket(WS_URL);
-  ws.onopen=()=>send({authorize:token});
+  ws.onopen=()=>send({authorize:API_TOKEN});
   ws.onmessage=onMessage;
 }
 function send(msg){if(ws && ws.readyState===1) ws.send(JSON.stringify(msg));}
@@ -144,7 +122,7 @@ function updateChart(){
       markers.push({
         time:data[i].time,
         position:signal==='buy'?'belowBar':'aboveBar',
-        color:'#a855f7', // purple marker
+        color:'#a855f7',
         shape:'circle',
         text:signal.toUpperCase()
       });
@@ -155,24 +133,9 @@ function updateChart(){
                       <span>${activeSymbol} @ ${price}</span>
                       <span class="${signal}">${signal.toUpperCase()}</span>`;
       el.feed.prepend(item);
-      if (signal === 'buy') {
-        beepBuy();
-      } else {
-        beepSell();
-      }
+      if (signal === 'buy') beepBuy(); else beepSell();
     }
   }
-
-  // Pre‑cross SELL warning: if fast EMA is just above slow EMA and about to cross down
-  const len = data.length;
-  if (len >= 2) {
-    const diffNow = ef[len - 1] - es[len - 1];
-    const diffPrev = ef[len - 2] - es[len - 2];
-    if (diffPrev > 0 && diffNow > 0 && diffNow < Math.abs(data[len - 1].close * 0.0005)) {
-      beepSell();
-    }
-  }
-
   candleSeries.setMarkers(markers);
 }
 
@@ -194,9 +157,6 @@ function onMessage(ev){
   if (data.error) return console.error(data.error.message);
 
   if (data.msg_type === 'authorize') {
-    el.accountChip.style.display = 'inline';
-    el.loginBtn.style.display = 'none';
-    el.logoutBtn.style.display = 'inline';
     send({ active_symbols: 'full', product_type: 'basic' });
   }
 
@@ -205,7 +165,7 @@ function onMessage(ev){
     el.symbolSelect.innerHTML = '';
     syms.forEach(s => {
       const opt = document.createElement('option');
-      opt.value = s.symbol;
+      opt.value =opt.value = s.symbol;
       opt.textContent = s.display_name;
       el.symbolSelect.appendChild(opt);
     });
@@ -243,25 +203,11 @@ el.applyBtn.addEventListener('click', () => {
   updateChart();
 });
 
-el.loginBtn.addEventListener('click', () => {
-  const oauthUrl = `https://oauth.deriv.com/oauth2/authorize?app_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`;
-  window.location.href = oauthUrl;
-});
-
-el.logoutBtn.addEventListener('click', () => {
-  location.href = location.pathname;
-});
-
 // ---------------------------
 // Init
 // ---------------------------
 initChart();
-const parsed = parseParams();
-const token = extractToken(parsed);
-if (token) {
-  sanitizeURL();
-  connectWS(token);
-}
+connectWS();
 </script>
 </body>
 </html>
