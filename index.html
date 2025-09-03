@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Deriv EMA Crossover — Volatility Indices</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Lightweight Charts (TradingView) -->
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #22c55e;
+      --warn: #ef4444;
+      --info: #60a5fa;
+      --yellow: #eab308;
+      --border: #1f2937;
+      --chip: #334155;
+      --buy: #16a34a;
+      --sell: #dc2626;
+      --ema-fast: #22d3ee;
+      --ema-slow: #f59e0b;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #0b1220, #0f172a);
+      color: var(--text);
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(6px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      background: conic-gradient(from 220deg, #22d3ee, #a78bfa, #f59e0b, #22d3ee);
+      box-shadow: 0 0 20px rgba(34, 211, 238, 0.3);
+    }
+    .title { font-weight: 700; letter-spacing: 0.2px; }
+    .sub { color: var(--muted); font-size: 0.8rem; }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    input[type="text"], select {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.5rem 0.6rem;
+      border-radius: 8px;
+      outline: none;
+      min-width: 160px;
+    }
+    .btn {
+      background: #1f2937;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.5rem 0.75rem;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.05s ease, background 0.2s ease, border-color 0.2s ease;
+      user-select: none;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn.primary { background: linear-gradient(180deg, #0ea5e9, #0369a1); border-color: #0ea5e9; }
+    .btn.success { background: linear-gradient(180deg, #16a34a, #15803d); border-color: #16a34a; }
+    .btn.warn { background: linear-gradient(180deg, #dc2626, #991b1b); border-color: #dc2626; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      background: var(--chip);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.25rem 0.6rem;
+      font-size: 0.8rem;
+      white-space: nowrap;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 1rem;
+      padding: 1rem;
+    }
+    @media (max-width: 960px) {
+      main { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      background: rgba(17, 24, 39, 0.7);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.75rem;
+    }
+
+    .sidebar .section {
+      margin-bottom: 1rem;
+    }
+    .sidebar label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem; }
+    .sidebar .row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .toggle {
+      display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.9rem;
+    }
+    .toggle input { transform: scale(1.1); }
+
+    .chart-wrap { display: grid; grid-template-rows: auto 1fr auto; gap: 0.5rem; min-height: 70vh; }
+    .status-bar {
+      display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+    .signal-banner {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.5rem 0.75rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+    .signal-banner.buy { display: flex; background: rgba(22,163,74,0.15); }
+    .signal-banner.sell { display: flex; background: rgba(220,38,38,0.15); }
+    .signal-label {
+      font-weight: 700; letter-spacing: 0.4px;
+      padding: 0.15rem 0.5rem; border-radius: 6px; color: #fff;
+    }
+    .signal-label.buy { background: var(--buy); }
+    .signal-label.sell { background: var(--sell); }
+
+    #chart { width: 100%; height: 64vh; }
+    @media (max-width: 600px) {
+      #chart { height: 60vh; }
+    }
+
+    .feed {
+      max-height: 180px;
+      overflow: auto;
+      border-top: 1px dashed var(--border);
+      margin-top: 0.5rem;
+      padding-top: 0.5rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.85rem;
+    }
+    .feed .item {
+      display: grid; grid-template-columns: auto 1fr auto; gap: 0.75rem;
+      padding: 0.35rem 0.25rem;
+      border-bottom: 1px dashed rgba(255,255,255,0.06);
+      align-items: center;
+    }
+    .feed .time { color: var(--muted); }
+    .feed .type.buy { color: var(--buy); font-weight: 700; }
+    .feed .type.sell { color: var(--sell); font-weight: 700; }
+
+    .errors {
+      margin-top: 0.5rem;
+      color: #fecaca;
+      background: rgba(153,27,27,0.15);
+      border: 1px solid rgba(239,68,68,0.4);
+      border-radius: 8px;
+      padding: 0.5rem;
+      display: none;
+      white-space: pre-wrap;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo" aria-hidden="true"></div>
+      <div>
+        <div class="title">Deriv EMA Crossover</div>
+        <div class="sub">Volatility Indices — OAuth + Candles + Signals</div>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="btn primary" id="loginBtn">Login with Deriv</button>
+      <button class="btn warn" id="logoutBtn" style="display:none;">Logout</button>
+      <span class="chip" id="accountChip" title="Authorized account" style="display:none;">Authorized</span>
+    </div>
+  </header>
+
+  <main>
+    <aside class="sidebar panel">
+      <div class="section">
+        <label for="symbolSelect">Volatility index</label>
+        <select id="symbolSelect" disabled>
+          <option>Loading...</option>
+        </select>
+      </div>
+
+      <div class="section">
+        <label>Chart settings</label>
+        <div class="row">
+          <div>
+            <label for="emaFast">EMA fast</label>
+            <input id="emaFast" type="text" value="5" style="width:80px;" />
+          </div>
+          <div>
+            <label for="emaSlow">EMA slow</label>
+            <input id="emaSlow" type="text" value="20" style="width:80px;" />
+          </div>
+          <button class="btn" id="applyBtn">Apply</button>
+        </div>
+        <div class="row" style="margin-top:0.5rem;">
+          <label class="toggle">
+            <input type="checkbox" id="soundToggle" checked />
+            <span>Sound on signals</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="section">
+        <label>Background subscriptions</label>
+        <div class="row">
+          <button class="btn" id="subscribeAllBtn" disabled>Subscribe all ticks</button>
+          <button class="btn" id="unsubscribeAllBtn" disabled>Unsubscribe all</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <label>Status</label>
+        <div id="status" class="chip">Disconnected</div>
+        <div class="errors" id="errors"></div>
+      </div>
+    </aside>
+
+    <section class="panel chart-wrap">
+      <div class="status-bar">
+        <span id="activeSymbol" class="chip">—</span>
+        <span class="chip">1m candles</span>
+        <span class="chip" style="background:#0b1220; border-color:#0b3b4a;">Fast EMA: <b style="margin-left:6px; color: var(--ema-fast)">line</b></span>
+        <span class="chip" style="background:#0b1220; border-color:#4a350b;">Slow EMA: <b style="margin-left:6px; color: var(--ema-slow)">line</b></span>
+      </div>
+
+      <div id="signalBanner" class="signal-banner">
+        <span id="signalLabel" class="signal-label">SIGNAL</span>
+        <span id="signalText">—</span>
+      </div>
+
+      <div id="chart"></div>
+
+      <div class="feed" id="feed"></div>
+    </section>
+  </main>
+
+  <script>
+    // ---------------------------
+    // Config and global state
+    // ---------------------------
+    const APP_ID = 99120; // Your Deriv App ID
+    const WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`;
+    const OAUTH_URL = (redirectUri) =>
+      `https://oauth.deriv.com/oauth2/authorize?app_id=${APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+
+    const GRANULARITY = 60; // 1-minute candles
+    const HISTORY_COUNT = 500; // initial candle history
+    const markers = [];
+
+    let ws = null;
+    let wsOpenPromise = null;
+    let authorized = false;
+    let activeSymbol = null;
+    let activeCandlesSubId = null;
+    let emaFastPeriod = 5;
+    let emaSlowPeriod = 20;
+
+    let chart, candleSeries, emaFastSeries, emaSlowSeries;
+    let candleBuffer = [];
+
+    const allVolSymbols = []; // filled dynamically via active_symbols
+    const tickSubscriptions = new Map(); // symbol -> subscriptionId
+
+    // UI elements
+    const el = {
+      loginBtn: document.getElementById('loginBtn'),
+      logoutBtn: document.getElementById('logoutBtn'),
+      accountChip: document.getElementById('accountChip'),
+      symbolSelect: document.getElementById('symbolSelect'),
+      applyBtn: document.getElementById('applyBtn'),
+      emaFast: document.getElementById('emaFast'),
+      emaSlow: document.getElementById('emaSlow'),
+      soundToggle: document.getElementById('soundToggle'),
+      subscribeAllBtn: document.getElementById('subscribeAllBtn'),
+      unsubscribeAllBtn: document.getElementById('unsubscribeAllBtn'),
+      status: document.getElementById('status'),
+      errors: document.getElementById('errors'),
+      activeSymbol: document.getElementById('activeSymbol'),
+      chart: document.getElementById('chart'),
+      signalBanner: document.getElementById('signalBanner'),
+      signalLabel: document.getElementById('signalLabel'),
+      signalText: document.getElementById('signalText'),
+      feed: document.getElementById('feed')
+    };
+
+    // ---------------------------
+    // Utilities
+    // ---------------------------
+    function setStatus(text, color = null) {
+      el.status.textContent = text;
+      el.status.style.background = color ? color : 'var(--chip)';
+    }
+    function showError(err) {
+      el.errors.style.display = 'block';
+      el.errors.textContent = (typeof err === 'string') ? err : JSON.stringify(err, null, 2);
+      console.error(err);
+    }
+    function clearError() {
+      el.errors.style.display = 'none';
+      el.errors.textContent = '';
+    }
+    function parseParams() {
+      const params = new URLSearchParams(window.location.search);
+      const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const out = {};
+      for (const [k, v] of params) out[k] = v;
+      for (const [k, v] of hash) out[k] = v;
+      return out;
+    }
+    function sanitizeURL() {
+      history.replaceState({}, document.title, location.pathname);
+    }
+    function formatTime(epoch) {
+      const d = new Date(epoch * 1000);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+    function beep() {
+      if (!el.soundToggle.checked) return;
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = 880;
+      o.connect(g);
+      g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+      o.start();
+      o.stop(ctx.currentTime + 0.18);
+    }
+    function clampInt(v, min, max, fallback) {
+      const n = parseInt(v, 10);
+      if (Number.isNaN(n)) return fallback;
+      return Math.min(Math.max(n, min), max);
+    }
+    function extractOAuthToken(parsed) {
+      // Support common Deriv OAuth return shapes: token1, token, access_token, auth_token, code
+      const keys = Object.keys(parsed);
+      for (const k of keys) {
+        if (/^token\d*$/.test(k)) return parsed[k];
+      }
+      for (const k of ['token', 'access_token', 'auth_token', 'code']) {
+        if (parsed[k]) return parsed[k];
+      }
+      return null;
+    }
+
+    // ---------------------------
+    // EMA math
+    // ---------------------------
+    function computeEMA(values, period) {
+      if (!values || values.length === 0 || period <= 0) return [];
+      const alpha = 2 / (period + 1);
+      const out = new Array(values.length).fill(null);
+      if (values.length < period) return out;
+      let sum = 0;
+      for (let i = 0; i < period; i++) sum += values[i];
+      out[period - 1] = sum / period;
+      for (let i = period; i < values.length; i++) {
+        const prev = out[i - 1] ?? values[i - 1];
+        out[i] = alpha * values[i] + (1 - alpha) * prev;
+      }
+      return out;
+    }
+    function detectCrossover(prevFast, prevSlow, fast, slow) {
+      if (prevFast == null || prevSlow == null || fast == null || slow == null) return null;
+      if (prevFast < prevSlow && fast >= slow) return 'buy';
+      if (prevFast > prevSlow && fast <= slow) return 'sell';
+      return null;
+    }
+
+    // ---------------------------
+    // Chart setup
+    // ---------------------------
+    function initChart() {
+      chart = LightweightCharts.createChart(el.chart, {
+        layout: { background: { type: 'solid', color: '#0b1220' }, textColor: '#d1d5db' },
+        rightPriceScale: { borderColor: 'rgba(197,203,206,0.4)' },
+        timeScale: { borderColor: 'rgba(197,203,206,0.4)' },
+        grid: {
+          vertLines: { color: 'rgba(197,203,206,0.08)' },
+          horzLines: { color: 'rgba(197,203,206,0.08)' },
+        },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        autoSize: true,
+      });
+
+      candleSeries = chart.addCandlestickSeries({
+        upColor: '#16a34a',
+        downColor: '#dc2626',
+        borderUpColor: '#16a34a',
+        borderDownColor: '#dc2626',
+        wickUpColor: '#16a34a',
+        wickDownColor: '#dc2626',
+      });
+
+      emaFastSeries = chart.addLineSeries({
+        color: getComputedStyle(document.documentElement).getPropertyValue('--ema-fast').trim() || '#22d3ee',
+        lineWidth: 2,
+      });
+
+      emaSlowSeries = chart.addLineSeries({
+        color: getComputedStyle(document.documentElement).getPropertyValue('--ema-slow').trim() || '#f59e0b',
+        lineWidth: 2,
+      });
+
+      window.addEventListener('resize', () => chart.resize(el.chart.clientWidth, el.chart.clientHeight));
+    }
+
+    function updateChartWithCandles(candles) {
+      const candleData = candles.map(c => ({
+        time: c.epoch,
+        open: +c.open, high: +c.high, low: +c.low, close: +c.close
+      }));
+      candleSeries.setData(candleData);
+
+      const closes = candleData.map(c => c.close);
+      const emaFast = computeEMA(closes, emaFastPeriod);
+      const emaSlow = computeEMA(closes, emaSlowPeriod);
+
+      emaFastSeries.setData(candleData.map((c, i) => emaFast[i] == null ? { time: c.time, value: null } : ({ time: c.time, value: +emaFast[i] })));
+      emaSlowSeries.setData(candleData.map((c, i) => emaSlow[i] == null ? { time: c.time, value: null } : ({ time: c.time, value: +emaSlow[i] })));
+
+      // Recompute markers for history
+      markers.length = 0;
+      for (let i = 1; i < candleData.length; i++) {
+        const signal = detectCrossover(emaFast[i-1], emaSlow[i-1], emaFast[i], emaSlow[i]);
+        if (signal) {
+          markers.push({
+            time: candleData[i].time,
+            position: signal === 'buy' ? 'belowBar' : 'aboveBar',
+            color: signal === 'buy' ? '#16a34a' : '#dc2626',
+            shape: 'circle',
+            size: 2,
+            text: signal.toUpperCase(),
+          });
+        }
+      }
+      candleSeries.setMarkers(markers);
+    }
+
+    function appendSignalFeed({type, symbol, epoch, price}) {
+      const item = document.createElement('div');
+      item.className = 'item';
+      const t = document.createElement('div');
+      t.className = 'time';
+      t.textContent = formatTime(epoch);
+      const mid = document.createElement('div');
+      mid.textContent = `${symbol} @ ${price}`;
+      const right = document.createElement('div');
+      right.className = `type ${type}`;
+      right.textContent = type.toUpperCase();
+      item.appendChild(t); item.appendChild(mid); item.appendChild(right);
+      el.feed.prepend(item);
+    }
+
+    function showSignalBanner(type, symbol, price) {
+      el.signalBanner.className = `signal-banner ${type}`;
+      el.signalLabel.className = `signal-label ${type}`;
+      el.signalLabel.textContent = type.toUpperCase();
+      el.signalText.textContent = `${symbol} @ ${price}`;
+    }
+
+    // ---------------------------
+    // WebSocket helpers
+    // ---------------------------
+    function connectWS() {
+      if (ws) try { ws.close(); } catch {}
+      ws = new WebSocket(WS_URL);
+      setStatus('Connecting...', '#374151');
+      wsOpenPromise = new Promise((resolve, reject) => {
+        ws.onopen = () => { setStatus('Connected', '#1e293b'); resolve(); };
+        ws.onerror = (e) => { showError('WebSocket error'); reject(e); };
+        ws.onclose = () => { setStatus('Disconnected', '#3f1d1d'); };
+      });
+      ws.onmessage = onMessage;
+      return wsOpenPromise;
+    }
+    function send(msg) {
+      if (!ws || ws.readyState !== 1) return;
+      ws.send(JSON.stringify(msg));
+    }
+    async function authorize(token) {
+      await wsOpenPromise;
+      send({ authorize: token });
+    }
+    function forget(subId) {
+      if (subId) send({ forget: subId });
+    }
+    function forgetAllTicks() {
+      send({ forget_all: 'ticks' });
+      tickSubscriptions.clear();
+    }
+
+    // ---------------------------
+    // Deriv message router
+    // ---------------------------
+    function onMessage(ev) {
+      try {
+        const data = JSON.parse(ev.data);
+
+        if (data.error) {
+          showError(`${data.error.code}: ${data.error.message}`);
+          return;
+        }
+
+        if (data.msg_type === 'authorize') {
+          authorized = true;
+          el.accountChip.style.display = 'inline-flex';
+          el.logoutBtn.style.display = 'inline-block';
+          el.loginBtn.style.display = 'none';
+          el.subscribeAllBtn.disabled = false;
+          el.unsubscribeAllBtn.disabled = false;
+          clearError();
+          send({ active_symbols: 'full', product_type: 'basic' });
+          return;
+        }
+
+        if (data.msg_type === 'active_symbols') {
+          const symbols = (data.active_symbols || []).filter(s => /Volatility/i.test(s.display_name));
+          allVolSymbols.length = 0;
+          allVolSymbols.push(...symbols.map(s => ({ symbol: s.symbol, display: s.display_name })));
+
+          el.symbolSelect.innerHTML = '';
+          allVolSymbols.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.symbol;
+            opt.textContent = s.display;
+            el.symbolSelect.appendChild(opt);
+          });
+          el.symbolSelect.disabled = false;
+
+          if (allVolSymbols.length > 0) {
+            setActiveSymbol(allVolSymbols[0].symbol);
+          }
+          return;
+        }
+
+        if (data.msg_type === 'ticks') {
+          // ignore background tick data for now
+        return;
+      }
+
+      // Candle history
+      if (data.history && data.history.candles) {
+        candleBuffer = data.history.candles.map(c => ({
+          epoch: +c.epoch, open: +c.open, high: +c.high, low: +c.low, close: +c.close
+        }));
+        updateChartWithCandles(candleBuffer);
+        return;
+      }
+
+      // Streaming candle updates
+      if (data.candles || data.ohlc) {
+        const arr = data.candles || [data.ohlc];
+        arr.forEach(c => {
+          const latest = {
+            epoch: +c.epoch,
+            open: +c.open, high: +c.high, low: +c.low, close: +c.close
+          };
+          const last = candleBuffer[candleBuffer.length - 1];
+          if (last && last.epoch === latest.epoch) {
+            candleBuffer[candleBuffer.length - 1] = latest;
+          } else {
+            candleBuffer.push(latest);
+            if (candleBuffer.length > HISTORY_COUNT) candleBuffer.shift();
+          }
+        });
+
+        // Detect crossover on the last candle
+        const closesPrev = candleBuffer.slice(0, -1).map(x => x.close);
+        const closesNow = candleBuffer.map(x => x.close);
+        const efPrev = computeEMA(closesPrev, emaFastPeriod);
+        const esPrev = computeEMA(closesPrev, emaSlowPeriod);
+        const efNow = computeEMA(closesNow, emaFastPeriod);
+        const esNow = computeEMA(closesNow, emaSlowPeriod);
+
+        const prevFast = efPrev[efPrev.length - 1];
+        const prevSlow = esPrev[esPrev.length - 1];
+        const fast = efNow[efNow.length - 1];
+        const slow = esNow[esNow.length - 1];
+
+        const signal = detectCrossover(prevFast, prevSlow, fast, slow);
+        if (signal) {
+          const lastCandle = candleBuffer[candleBuffer.length - 1];
+          appendSignalFeed({ type: signal, symbol: activeSymbol, epoch: lastCandle.epoch, price: lastCandle.close });
+          showSignalBanner(signal, activeSymbol, lastCandle.close);
+          beep();
+        }
+
+        updateChartWithCandles(candleBuffer);
+      }
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  // ---------------------------
+  // Symbol switching
+  // ---------------------------
+  function setActiveSymbol(symbol) {
+    if (activeCandlesSubId) forget(activeCandlesSubId);
+    activeSymbol = symbol;
+    el.activeSymbol.textContent = symbol;
+    candleBuffer = [];
+    send({
+      ticks_history: symbol,
+      adjust_start_time: 1,
+      count: HISTORY_COUNT,
+      granularity: GRANULARITY,
+      style: 'candles',
+      subscribe: 1
+    });
+  }
+
+  // ---------------------------
+  // Event listeners
+  // ---------------------------
+  el.symbolSelect.addEventListener('change', e => {
+    setActiveSymbol(e.target.value);
+  });
+
+  el.applyBtn.addEventListener('click', () => {
+    emaFastPeriod = clampInt(el.emaFast.value, 1, 100, 5);
+    emaSlowPeriod = clampInt(el.emaSlow.value, 1, 200, 20);
+    updateChartWithCandles(candleBuffer);
+  });
+
+  el.loginBtn.addEventListener('click', () => {
+    const redirectUri = window.location.origin + window.location.pathname;
+    window.location.href = OAUTH_URL(redirectUri);
+  });
+
+  el.logoutBtn.addEventListener('click', () => {
+    location.href = location.pathname; // reload without tokens
+  });
+
+  // ---------------------------
+  // Init
+  // ---------------------------
+  initChart();
+  const parsed = parseParams();
+  const token = extractOAuthToken(parsed);
+  if (token) {
+    sanitizeURL();
+    connectWS().then(() => authorize(token));
+  }
+</script>
+</body>
+</html>
