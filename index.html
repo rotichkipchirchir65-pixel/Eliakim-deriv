@@ -1,9 +1,8 @@
-<!-- Eliakim's Accumulator + EMA Crossover Dashboard - All-in-one, Real Account Linked, Sound Alerts, Multi-symbol -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Accumulator + EMA Crossover Dashboard</title>
+  <title>Accumulator + EMA Crossover Dashboard (Login)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
   <style>
@@ -18,55 +17,85 @@
     .feed .item { display: flex; justify-content: space-between; padding: 0.25rem 0; border-bottom: 1px dashed #374151; }
     .buy { color: #16a34a; } .sell { color: #dc2626; }
     .multi-symbols { margin-top: 0.5rem; }
+    .hidden { display: none !important; }
+    .login-box { background: #1f2937; padding: 1rem; border-radius: 10px; margin-bottom: 2rem; max-width: 400px; margin-left: auto; margin-right: auto; }
+    .login-box input[type="password"] { width: 100%; padding: 0.5rem; font-size: 1rem; border-radius: 6px; border: none; margin-top: 0.5rem; }
+    .login-box button { margin-top: 1rem; padding: 0.5rem 1.5rem; border-radius: 6px; border: none; background: #16a34a; color: white; font-weight: bold; cursor: pointer; }
+    .login-box .info { font-size: 0.85rem; color: #fbbf24; margin-top: 0.3rem;}
+    .login-error { color: #f87171; margin-top: 0.5rem;}
     @media (max-width: 600px) {
       header { font-size: 1.1rem; }
       #chart { height: 40vh; }
       .status, .feed, .controls { padding: 0.5rem; }
+      .login-box { padding: 0.5rem; }
     }
   </style>
 </head>
 <body>
   <header>📈 Accumulator + EMA Crossover Dashboard</header>
-  <div class="controls">
-    <label>Symbols (hold Ctrl/⌘ for multi-select)</label>
-    <select id="symbolSelect" multiple size="3"><option>Loading...</option></select>
 
-    <label>Growth Rate (%)</label>
-    <input type="number" id="growthInput" value="3" min="1" max="5" />
-
-    <label>EMA Fast</label>
-    <input type="number" id="emaFast" value="5" />
-
-    <label>EMA Slow</label>
-    <input type="number" id="emaSlow" value="20" />
-
-    <button id="startBtn">Start Monitoring</button>
+  <!-- LOGIN FORM -->
+  <div class="login-box" id="loginBox">
+    <div><label for="apiToken">Enter your Deriv API Token:</label></div>
+    <input type="password" id="apiToken" placeholder="Paste your API token here" autocomplete="off" />
+    <button id="loginBtn">Login &amp; Connect</button>
+    <div class="info">
+      Get your API token from <a href="https://app.deriv.com/account/settings/security/api-token" target="_blank" style="color:#fbbf24;">Deriv Security settings</a>.
+      <br>(We do NOT store your token. It is used only in your browser.)
+    </div>
+    <div class="login-error" id="loginError"></div>
   </div>
 
-  <div class="status">
-    <div id="connectionStatus">🔄 Connecting to Deriv...</div>
-    <div class="multi-symbols" id="multiStatus"></div>
-    <div>📊 Price: <span id="price">--</span></div>
-    <div>📉 Lower Barrier: <span id="lowerBarrier">--</span></div>
-    <div>📈 Upper Barrier: <span id="upperBarrier">--</span></div>
-    <div id="alertMsg"></div>
-  </div>
+  <!-- DASHBOARD -->
+  <div id="dashboard" class="hidden">
+    <div class="controls">
+      <label>Symbols (hold Ctrl/⌘ for multi-select)</label>
+      <select id="symbolSelect" multiple size="3"><option>Loading...</option></select>
 
-  <div id="chart"></div>
-  <div class="feed" id="feed"></div>
+      <label>Growth Rate (%)</label>
+      <input type="number" id="growthInput" value="3" min="1" max="5" />
+
+      <label>EMA Fast</label>
+      <input type="number" id="emaFast" value="5" />
+
+      <label>EMA Slow</label>
+      <input type="number" id="emaSlow" value="20" />
+
+      <button id="startBtn">Start Monitoring</button>
+      <button id="logoutBtn" style="margin-left:1rem;background:#dc2626;">Logout</button>
+    </div>
+
+    <div class="status">
+      <div id="connectionStatus">🔄 Connecting to Deriv...</div>
+      <div class="multi-symbols" id="multiStatus"></div>
+      <div>📊 Price: <span id="price">--</span></div>
+      <div>📉 Lower Barrier: <span id="lowerBarrier">--</span></div>
+      <div>📈 Upper Barrier: <span id="upperBarrier">--</span></div>
+      <div id="alertMsg"></div>
+    </div>
+
+    <div id="chart"></div>
+    <div class="feed" id="feed"></div>
+  </div>
 
   <!-- Sound alert element (beep) -->
   <audio id="alertSound" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" preload="auto"></audio>
 
 <script>
 const APP_ID = 99120;
-const API_TOKEN = "lKcYGLpmaAMgUkH"; // Your provided API token
 const WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`;
 const GRANULARITY = 60, HISTORY_COUNT = 500;
 
 let chart, candleSeries, emaFastSeries, emaSlowSeries;
 
 const el = {
+  loginBox: document.getElementById('loginBox'),
+  dashboard: document.getElementById('dashboard'),
+  apiToken: document.getElementById('apiToken'),
+  loginBtn: document.getElementById('loginBtn'),
+  loginError: document.getElementById('loginError'),
+  logoutBtn: document.getElementById('logoutBtn'),
+
   symbolSelect: document.getElementById('symbolSelect'),
   growthInput: document.getElementById('growthInput'),
   emaFast: document.getElementById('emaFast'),
@@ -83,7 +112,7 @@ const el = {
   alertSound: document.getElementById('alertSound')
 };
 
-// Per-symbol state for multi-symbol monitoring
+let apiToken = null;
 let wsSockets = {};
 let candleBuffers = {};
 let growthRate = 3, emaFastPeriod = 5, emaSlowPeriod = 20;
@@ -108,7 +137,6 @@ function computeEMA(values, period) {
   return out;
 }
 
-// Crossover detection (returns 'buy' or 'sell' or null)
 function detectCrossover(pf, ps, f, s) {
   if (pf == null || ps == null || f == null || s == null) return null;
   if (pf < ps && f >= s) return 'buy';
@@ -116,7 +144,6 @@ function detectCrossover(pf, ps, f, s) {
   return null;
 }
 
-// Chart setup (only visualizes first selected symbol)
 function initChart() {
   chart = LightweightCharts.createChart(el.chart, {
     layout: { background: { color: '#0f172a' }, textColor: '#e5e7eb' },
@@ -127,7 +154,6 @@ function initChart() {
   emaSlowSeries = chart.addLineSeries({ color: '#dc2626', lineWidth: 2 });
 }
 
-// Update chart for a symbol (only first symbol visualized)
 function updateChart(symbol) {
   const buffer = candleBuffers[symbol];
   if (!buffer || !buffer.length) return;
@@ -159,7 +185,6 @@ function updateChart(symbol) {
   candleSeries.setMarkers(markers);
 }
 
-// Add signal to feed
 function addFeedItem(symbol, epoch, signal) {
   const item = document.createElement('div');
   item.className = `item ${signal}`;
@@ -169,7 +194,6 @@ function addFeedItem(symbol, epoch, signal) {
   el.feed.prepend(item);
 }
 
-// Show multi-symbol status
 function updateMultiStatus(statusMap) {
   let str = "";
   Object.entries(statusMap).forEach(([symbol, status]) => {
@@ -178,9 +202,7 @@ function updateMultiStatus(statusMap) {
   el.multiStatus.innerHTML = str;
 }
 
-// Connect and subscribe for each symbol
 function startMonitoring(symbols) {
-  // Disconnect previous sockets
   Object.values(wsSockets).forEach(socket => {
     try { socket.close(); } catch(e) {}
   });
@@ -200,7 +222,7 @@ function startMonitoring(symbols) {
     wsSockets[symbol] = ws;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ authorize: API_TOKEN }));
+      ws.send(JSON.stringify({ authorize: apiToken }));
       if (idx === 0) el.connectionStatus.textContent = `🔄 Connecting to Deriv...`;
     };
 
@@ -220,7 +242,6 @@ function startMonitoring(symbols) {
       }
 
       if (data.msg_type === 'active_symbols') {
-        // Only first socket populates symbol select
         if (idx === 0) {
           const syms = data.active_symbols.filter(s => /Volatility/i.test(s.display_name));
           el.symbolSelect.innerHTML = '';
@@ -231,7 +252,6 @@ function startMonitoring(symbols) {
             el.symbolSelect.appendChild(opt);
           });
         }
-        // Start subscriptions for symbol
         ws.send(JSON.stringify({
           ticks_history: symbol,
           adjust_start_time: 1,
@@ -262,7 +282,6 @@ function startMonitoring(symbols) {
             if (buffer.length > HISTORY_COUNT) buffer.shift();
           }
         });
-        // Only first symbol visualized
         if (idx === 0) updateChart(symbol);
       }
 
@@ -273,13 +292,12 @@ function startMonitoring(symbols) {
         barriers[symbol].lower = price * (1 - range);
         barriers[symbol].upper = price * (1 + range);
 
-        // Only first symbol updates main status
         if (idx === 0) {
           el.price.textContent = price.toFixed(5);
           el.lowerBarrier.textContent = barriers[symbol].lower.toFixed(5);
           el.upperBarrier.textContent = barriers[symbol].upper.toFixed(5);
 
-          const proximity = 0.005 * price; // 0.5% proximity alert
+          const proximity = 0.005 * price;
           if (Math.abs(price - barriers[symbol].lower) <= proximity) {
             el.alertMsg.innerHTML = `<div class="alert">⚠️ Near LOWER barrier</div>`;
             playAlertSound();
@@ -300,6 +318,33 @@ function startMonitoring(symbols) {
   });
 }
 
+// Login flow
+el.loginBtn.addEventListener('click', () => {
+  const token = el.apiToken.value.trim();
+  el.loginError.textContent = '';
+  if (!token || token.length < 10) {
+    el.loginError.textContent = "Please enter a valid API token.";
+    return;
+  }
+  apiToken = token;
+  el.loginBox.classList.add('hidden');
+  el.dashboard.classList.remove('hidden');
+  initChart();
+  startMonitoring(['R_50']);
+});
+
+el.logoutBtn.addEventListener('click', () => {
+  apiToken = null;
+  Object.values(wsSockets).forEach(socket => {
+    try { socket.close(); } catch(e) {}
+  });
+  wsSockets = {};
+  el.dashboard.classList.add('hidden');
+  el.loginBox.classList.remove('hidden');
+  el.apiToken.value = '';
+  el.loginError.textContent = '';
+});
+
 el.startBtn.addEventListener('click', () => {
   growthRate = parseFloat(el.growthInput.value) || 3;
   emaFastPeriod = parseInt(el.emaFast.value) || 5;
@@ -312,10 +357,6 @@ el.startBtn.addEventListener('click', () => {
   initChart();
   startMonitoring(selectedSymbols);
 });
-
-// On load: start chart and connect to Deriv for symbol list
-initChart();
-startMonitoring(['R_50']); // Default symbol for initial load (will be replaced on symbol select)
 </script>
 </body>
 </html>
