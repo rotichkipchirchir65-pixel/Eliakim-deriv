@@ -1,4 +1,4 @@
-<!-- Eliakim's Accumulator + EMA Crossover Dashboard -->
+<!-- Eliakim's Accumulator + EMA Crossover Dashboard - All-in-one, Real Account Linked, Sound Alerts, Multi-symbol -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -17,13 +17,19 @@
     .feed { font-size: 0.85rem; margin-top: 1rem; max-height: 150px; overflow-y: auto; background: #1f2937; padding: 0.5rem; border-radius: 6px; }
     .feed .item { display: flex; justify-content: space-between; padding: 0.25rem 0; border-bottom: 1px dashed #374151; }
     .buy { color: #16a34a; } .sell { color: #dc2626; }
+    .multi-symbols { margin-top: 0.5rem; }
+    @media (max-width: 600px) {
+      header { font-size: 1.1rem; }
+      #chart { height: 40vh; }
+      .status, .feed, .controls { padding: 0.5rem; }
+    }
   </style>
 </head>
 <body>
   <header>📈 Accumulator + EMA Crossover Dashboard</header>
   <div class="controls">
-    <label>Symbol</label>
-    <select id="symbolSelect"><option>Loading...</option></select>
+    <label>Symbols (hold Ctrl/⌘ for multi-select)</label>
+    <select id="symbolSelect" multiple size="3"><option>Loading...</option></select>
 
     <label>Growth Rate (%)</label>
     <input type="number" id="growthInput" value="3" min="1" max="5" />
@@ -38,6 +44,8 @@
   </div>
 
   <div class="status">
+    <div id="connectionStatus">🔄 Connecting to Deriv...</div>
+    <div class="multi-symbols" id="multiStatus"></div>
     <div>📊 Price: <span id="price">--</span></div>
     <div>📉 Lower Barrier: <span id="lowerBarrier">--</span></div>
     <div>📈 Upper Barrier: <span id="upperBarrier">--</span></div>
@@ -47,16 +55,16 @@
   <div id="chart"></div>
   <div class="feed" id="feed"></div>
 
+  <!-- Sound alert element (beep) -->
+  <audio id="alertSound" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" preload="auto"></audio>
+
 <script>
 const APP_ID = 99120;
-const API_TOKEN = "lKcYGLpmaAMgUkH";
+const API_TOKEN = "lKcYGLpmaAMgUkH"; // Your provided API token
 const WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`;
 const GRANULARITY = 60, HISTORY_COUNT = 500;
 
-let ws, activeSymbol = null, candleBuffer = [];
 let chart, candleSeries, emaFastSeries, emaSlowSeries;
-let growthRate = 3, emaFastPeriod = 5, emaSlowPeriod = 20;
-let lowerBarrier = null, upperBarrier = null;
 
 const el = {
   symbolSelect: document.getElementById('symbolSelect'),
@@ -69,18 +77,27 @@ const el = {
   upperBarrier: document.getElementById('upperBarrier'),
   alertMsg: document.getElementById('alertMsg'),
   chart: document.getElementById('chart'),
-  feed: document.getElementById('feed')
+  feed: document.getElementById('feed'),
+  connectionStatus: document.getElementById('connectionStatus'),
+  multiStatus: document.getElementById('multiStatus'),
+  alertSound: document.getElementById('alertSound')
 };
 
-function connectWS() {
-  ws = new WebSocket(WS_URL);
-  ws.onopen = () => send({ authorize: API_TOKEN });
-  ws.onmessage = onMessage;
-}
-function send(msg) {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
+// Per-symbol state for multi-symbol monitoring
+let wsSockets = {};
+let candleBuffers = {};
+let growthRate = 3, emaFastPeriod = 5, emaSlowPeriod = 20;
+let barriers = {}; // {symbol: {lower, upper}}
+
+// Helper: play sound alert
+function playAlertSound() {
+  try {
+    el.alertSound.currentTime = 0;
+    el.alertSound.play();
+  } catch(e) {}
 }
 
+// EMA calculation
 function computeEMA(values, period) {
   const alpha = 2 / (period + 1), out = new Array(values.length).fill(null);
   if (values.length < period) return out;
@@ -91,6 +108,7 @@ function computeEMA(values, period) {
   return out;
 }
 
+// Crossover detection (returns 'buy' or 'sell' or null)
 function detectCrossover(pf, ps, f, s) {
   if (pf == null || ps == null || f == null || s == null) return null;
   if (pf < ps && f >= s) return 'buy';
@@ -98,6 +116,7 @@ function detectCrossover(pf, ps, f, s) {
   return null;
 }
 
+// Chart setup (only visualizes first selected symbol)
 function initChart() {
   chart = LightweightCharts.createChart(el.chart, {
     layout: { background: { color: '#0f172a' }, textColor: '#e5e7eb' },
@@ -108,8 +127,11 @@ function initChart() {
   emaSlowSeries = chart.addLineSeries({ color: '#dc2626', lineWidth: 2 });
 }
 
-function updateChart() {
-  const data = candleBuffer.map(c => ({
+// Update chart for a symbol (only first symbol visualized)
+function updateChart(symbol) {
+  const buffer = candleBuffers[symbol];
+  if (!buffer || !buffer.length) return;
+  const data = buffer.map(c => ({
     time: c.epoch, open: +c.open, high: +c.high, low: +c.low, close: +c.close
   }));
   candleSeries.setData(data);
@@ -130,107 +152,170 @@ function updateChart() {
         shape: 'circle',
         text: signal.toUpperCase()
       });
-      const item = document.createElement('div');
-      item.className = `item ${signal}`;
-      item.innerHTML = `<span>${new Date(data[i].time * 1000).toLocaleTimeString()}</span>
-                        <span>${activeSymbol}</span>
-                        <span class="${signal}">${signal.toUpperCase()}</span>`;
-      el.feed.prepend(item);
+      addFeedItem(symbol, data[i].time, signal);
+      playAlertSound();
     }
   }
   candleSeries.setMarkers(markers);
 }
 
-function setSymbol(symbol) {
-  activeSymbol = symbol;
-  candleBuffer = [];
-  send({
-    ticks_history: symbol,
-    adjust_start_time: 1,
-    count: HISTORY_COUNT,
-    granularity: GRANULARITY,
-    style: 'candles',
-    subscribe: 1
-  });
-  send({ ticks: symbol, subscribe: 1 });
+// Add signal to feed
+function addFeedItem(symbol, epoch, signal) {
+  const item = document.createElement('div');
+  item.className = `item ${signal}`;
+  item.innerHTML = `<span>${new Date(epoch * 1000).toLocaleTimeString()}</span>
+                    <span>${symbol}</span>
+                    <span class="${signal}">${signal.toUpperCase()}</span>`;
+  el.feed.prepend(item);
 }
 
-function onMessage(ev) {
-  const data = JSON.parse(ev.data);
-  if (data.error) return console.error(data.error.message);
+// Show multi-symbol status
+function updateMultiStatus(statusMap) {
+  let str = "";
+  Object.entries(statusMap).forEach(([symbol, status]) => {
+    str += `<div>${symbol}: ${status}</div>`;
+  });
+  el.multiStatus.innerHTML = str;
+}
 
-  if (data.msg_type === 'authorize') {
-    send({ active_symbols: 'brief', product_type: 'basic' });
-  }
+// Connect and subscribe for each symbol
+function startMonitoring(symbols) {
+  // Disconnect previous sockets
+  Object.values(wsSockets).forEach(socket => {
+    try { socket.close(); } catch(e) {}
+  });
+  wsSockets = {};
+  candleBuffers = {};
+  barriers = {};
+  el.feed.innerHTML = '';
+  el.price.textContent = '--';
+  el.lowerBarrier.textContent = '--';
+  el.upperBarrier.textContent = '--';
+  el.alertMsg.innerHTML = '';
+  el.multiStatus.innerHTML = '';
 
-  if (data.msg_type === 'active_symbols') {
-    const syms = data.active_symbols.filter(s => /Volatility/i.test(s.display_name));
-    el.symbolSelect.innerHTML = '';
-    syms.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s.symbol;
-      opt.textContent = s.display_name;
-      el.symbolSelect.appendChild(opt);
-    });
-    activeSymbol = syms[0].symbol;
-  }
+  symbols.forEach((symbol, idx) => {
+    candleBuffers[symbol] = [];
+    let ws = new WebSocket(WS_URL);
+    wsSockets[symbol] = ws;
 
-  // COMBINED CODE PART
-  if (data.msg_type === 'candles' || data.msg_type === 'ohlc') {
-    const arr = data.candles || [data.ohlc];
-    arr.forEach(c => {
-      const latest = {
-        epoch: +c.epoch,
-        open: +c.open,
-        high: +c.high,
-        low: +c.low,
-        close: +c.close
-      };
-      const last = candleBuffer[candleBuffer.length - 1];
-      if (last && last.epoch === latest.epoch) {
-        candleBuffer[candleBuffer.length - 1] = latest;
-      } else {
-        candleBuffer.push(latest);
-        if (candleBuffer.length > HISTORY_COUNT) candleBuffer.shift();
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ authorize: API_TOKEN }));
+      if (idx === 0) el.connectionStatus.textContent = `🔄 Connecting to Deriv...`;
+    };
+
+    ws.onmessage = (ev) => {
+      const data = JSON.parse(ev.data);
+      if (data.error) {
+        el.connectionStatus.textContent = `❌ Connection error: ${data.error.message}`;
+        updateMultiStatus({ [symbol]: "❌ Error" });
+        return;
       }
-    });
-    updateChart();
-  }
-  // END COMBINED
 
-  if (data.msg_type === 'tick') {
-    const price = parseFloat(data.tick.quote);
-    el.price.textContent = price.toFixed(5);
+      if (data.msg_type === 'authorize') {
+        if (idx === 0) {
+          el.connectionStatus.textContent = `✅ Connected as ${data.authorize.loginid}`;
+        }
+        ws.send(JSON.stringify({ active_symbols: 'brief', product_type: 'basic' }));
+      }
 
-    const range = growthRate / 100;
-    lowerBarrier = price * (1 - range);
-    upperBarrier = price * (1 + range);
-    el.lowerBarrier.textContent = lowerBarrier.toFixed(5);
-    el.upperBarrier.textContent = upperBarrier.toFixed(5);
+      if (data.msg_type === 'active_symbols') {
+        // Only first socket populates symbol select
+        if (idx === 0) {
+          const syms = data.active_symbols.filter(s => /Volatility/i.test(s.display_name));
+          el.symbolSelect.innerHTML = '';
+          syms.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.symbol;
+            opt.textContent = s.display_name;
+            el.symbolSelect.appendChild(opt);
+          });
+        }
+        // Start subscriptions for symbol
+        ws.send(JSON.stringify({
+          ticks_history: symbol,
+          adjust_start_time: 1,
+          count: HISTORY_COUNT,
+          granularity: GRANULARITY,
+          style: 'candles',
+          subscribe: 1
+        }));
+        ws.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
+      }
 
-    const proximity = 0.005 * price; // 0.5% proximity alert
-    if (Math.abs(price - lowerBarrier) <= proximity) {
-      el.alertMsg.innerHTML = `<div class="alert">⚠️ Near LOWER barrier</div>`;
-    } else if (Math.abs(price - upperBarrier) <= proximity) {
-      el.alertMsg.innerHTML = `<div class="alert">⚠️ Near UPPER barrier</div>`;
-    } else {
-      el.alertMsg.innerHTML = `<div class="safe">✅ Price safely within range</div>`;
-    }
-  }
+      if (data.msg_type === 'candles' || data.msg_type === 'ohlc') {
+        const arr = data.candles || [data.ohlc];
+        arr.forEach(c => {
+          const latest = {
+            epoch: +c.epoch,
+            open: +c.open,
+            high: +c.high,
+            low: +c.low,
+            close: +c.close
+          };
+          const buffer = candleBuffers[symbol];
+          const last = buffer[buffer.length - 1];
+          if (last && last.epoch === latest.epoch) {
+            buffer[buffer.length - 1] = latest;
+          } else {
+            buffer.push(latest);
+            if (buffer.length > HISTORY_COUNT) buffer.shift();
+          }
+        });
+        // Only first symbol visualized
+        if (idx === 0) updateChart(symbol);
+      }
+
+      if (data.msg_type === 'tick') {
+        const price = parseFloat(data.tick.quote);
+        barriers[symbol] = barriers[symbol] || {};
+        const range = growthRate / 100;
+        barriers[symbol].lower = price * (1 - range);
+        barriers[symbol].upper = price * (1 + range);
+
+        // Only first symbol updates main status
+        if (idx === 0) {
+          el.price.textContent = price.toFixed(5);
+          el.lowerBarrier.textContent = barriers[symbol].lower.toFixed(5);
+          el.upperBarrier.textContent = barriers[symbol].upper.toFixed(5);
+
+          const proximity = 0.005 * price; // 0.5% proximity alert
+          if (Math.abs(price - barriers[symbol].lower) <= proximity) {
+            el.alertMsg.innerHTML = `<div class="alert">⚠️ Near LOWER barrier</div>`;
+            playAlertSound();
+          } else if (Math.abs(price - barriers[symbol].upper) <= proximity) {
+            el.alertMsg.innerHTML = `<div class="alert">⚠️ Near UPPER barrier</div>`;
+            playAlertSound();
+          } else {
+            el.alertMsg.innerHTML = `<div class="safe">✅ Price safely within range</div>`;
+          }
+        }
+        updateMultiStatus({ [symbol]: `Live: ${price.toFixed(5)}` });
+      }
+    };
+
+    ws.onerror = () => {
+      updateMultiStatus({ [symbol]: "❌ WebSocket error" });
+    };
+  });
 }
 
 el.startBtn.addEventListener('click', () => {
   growthRate = parseFloat(el.growthInput.value) || 3;
   emaFastPeriod = parseInt(el.emaFast.value) || 5;
   emaSlowPeriod = parseInt(el.emaSlow.value) || 20;
-  activeSymbol = el.symbolSelect.value;
-  candleBuffer = [];
-  el.feed.innerHTML = '';
-  setSymbol(activeSymbol);
+  const selectedSymbols = Array.from(el.symbolSelect.selectedOptions).map(opt => opt.value);
+  if (selectedSymbols.length === 0) {
+    alert('Please select at least one symbol.');
+    return;
+  }
+  initChart();
+  startMonitoring(selectedSymbols);
 });
 
+// On load: start chart and connect to Deriv for symbol list
 initChart();
-connectWS();
+startMonitoring(['R_50']); // Default symbol for initial load (will be replaced on symbol select)
 </script>
 </body>
 </html>
