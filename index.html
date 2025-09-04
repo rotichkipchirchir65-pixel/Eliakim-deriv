@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Accumulator + EMA Crossover Dashboard (Login)</title>
+  <title>Accumulator + EMA Crossover Dashboard (Deriv OAuth2)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
   <style>
@@ -18,30 +18,29 @@
     .buy { color: #16a34a; } .sell { color: #dc2626; }
     .multi-symbols { margin-top: 0.5rem; }
     .hidden { display: none !important; }
-    .login-box { background: #1f2937; padding: 1rem; border-radius: 10px; margin-bottom: 2rem; max-width: 400px; margin-left: auto; margin-right: auto; }
-    .login-box input[type="password"] { width: 100%; padding: 0.5rem; font-size: 1rem; border-radius: 6px; border: none; margin-top: 0.5rem; }
-    .login-box button { margin-top: 1rem; padding: 0.5rem 1.5rem; border-radius: 6px; border: none; background: #16a34a; color: white; font-weight: bold; cursor: pointer; }
-    .login-box .info { font-size: 0.85rem; color: #fbbf24; margin-top: 0.3rem;}
+    .oauth-login { background: #1f2937; padding: 1rem; border-radius: 10px; max-width: 400px; margin: 2rem auto; text-align:center;}
+    .oauth-login button { padding: 0.7rem 1.5rem; border-radius: 6px; border: none; background: #1a73e8; color: white; font-weight: bold; font-size:1rem; cursor: pointer; margin-bottom:0.7rem;}
+    .oauth-login .info { font-size: 0.85rem; color: #fbbf24; margin-top: 0.3rem;}
     .login-error { color: #f87171; margin-top: 0.5rem;}
     @media (max-width: 600px) {
       header { font-size: 1.1rem; }
       #chart { height: 40vh; }
       .status, .feed, .controls { padding: 0.5rem; }
-      .login-box { padding: 0.5rem; }
+      .oauth-login { padding: 0.5rem; }
     }
   </style>
 </head>
 <body>
   <header>📈 Accumulator + EMA Crossover Dashboard</header>
 
-  <!-- LOGIN FORM -->
-  <div class="login-box" id="loginBox">
-    <div><label for="apiToken">Enter your Deriv API Token:</label></div>
-    <input type="password" id="apiToken" placeholder="Paste your API token here" autocomplete="off" />
-    <button id="loginBtn">Login &amp; Connect</button>
+  <!-- OAUTH LOGIN -->
+  <div id="oauthLoginBox" class="oauth-login">
+    <button id="oauthLoginBtn">Login with Deriv</button>
     <div class="info">
-      Get your API token from <a href="https://app.deriv.com/account/settings/security/api-token" target="_blank" style="color:#fbbf24;">Deriv Security settings</a>.
-      <br>(We do NOT store your token. It is used only in your browser.)
+      You will be redirected to Deriv to authorize this app.<br>
+      No password required, safe for any account.<br>
+      <br>
+      <b>Note:</b> Your token is only used in your browser, never stored by us.
     </div>
     <div class="login-error" id="loginError"></div>
   </div>
@@ -78,24 +77,19 @@
     <div class="feed" id="feed"></div>
   </div>
 
-  <!-- Sound alert element (beep) -->
   <audio id="alertSound" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" preload="auto"></audio>
 
 <script>
 const APP_ID = 99120;
 const WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`;
 const GRANULARITY = 60, HISTORY_COUNT = 500;
-
-let chart, candleSeries, emaFastSeries, emaSlowSeries;
+const REDIRECT_URI = window.location.origin + window.location.pathname;
 
 const el = {
-  loginBox: document.getElementById('loginBox'),
-  dashboard: document.getElementById('dashboard'),
-  apiToken: document.getElementById('apiToken'),
-  loginBtn: document.getElementById('loginBtn'),
+  oauthLoginBox: document.getElementById('oauthLoginBox'),
+  oauthLoginBtn: document.getElementById('oauthLoginBtn'),
   loginError: document.getElementById('loginError'),
-  logoutBtn: document.getElementById('logoutBtn'),
-
+  dashboard: document.getElementById('dashboard'),
   symbolSelect: document.getElementById('symbolSelect'),
   growthInput: document.getElementById('growthInput'),
   emaFast: document.getElementById('emaFast'),
@@ -109,14 +103,21 @@ const el = {
   feed: document.getElementById('feed'),
   connectionStatus: document.getElementById('connectionStatus'),
   multiStatus: document.getElementById('multiStatus'),
-  alertSound: document.getElementById('alertSound')
+  alertSound: document.getElementById('alertSound'),
+  logoutBtn: document.getElementById('logoutBtn')
 };
 
 let apiToken = null;
 let wsSockets = {};
 let candleBuffers = {};
 let growthRate = 3, emaFastPeriod = 5, emaSlowPeriod = 20;
-let barriers = {}; // {symbol: {lower, upper}}
+let barriers = {};
+
+// Get OAuth2 token from URL (?token1=xxx)
+function getTokenFromURL() {
+  const urlParams = new URLSearchParams(window.location.search);
+  return urlParams.get('token1');
+}
 
 // Helper: play sound alert
 function playAlertSound() {
@@ -318,32 +319,37 @@ function startMonitoring(symbols) {
   });
 }
 
-// Login flow
-el.loginBtn.addEventListener('click', () => {
-  const token = el.apiToken.value.trim();
-  el.loginError.textContent = '';
-  if (!token || token.length < 10) {
-    el.loginError.textContent = "Please enter a valid API token.";
-    return;
-  }
-  apiToken = token;
-  el.loginBox.classList.add('hidden');
-  el.dashboard.classList.remove('hidden');
-  initChart();
-  startMonitoring(['R_50']);
-});
+// OAUTH LOGIN button
+el.oauthLoginBtn.onclick = function() {
+  const url = `https://oauth.deriv.com/oauth2/authorize?app_id=${APP_ID}&l=${REDIRECT_URI}`;
+  window.location.href = url;
+};
 
-el.logoutBtn.addEventListener('click', () => {
+// LOGOUT button
+el.logoutBtn.onclick = function() {
   apiToken = null;
   Object.values(wsSockets).forEach(socket => {
     try { socket.close(); } catch(e) {}
   });
   wsSockets = {};
   el.dashboard.classList.add('hidden');
-  el.loginBox.classList.remove('hidden');
-  el.apiToken.value = '';
-  el.loginError.textContent = '';
-});
+  el.oauthLoginBox.classList.remove('hidden');
+  window.history.replaceState({}, document.title, REDIRECT_URI); // Remove token from URL
+};
+
+// On load: check token
+window.onload = function() {
+  apiToken = getTokenFromURL();
+  if (apiToken) {
+    el.oauthLoginBox.classList.add('hidden');
+    el.dashboard.classList.remove('hidden');
+    initChart();
+    startMonitoring(['R_50']); // Default symbol for initial load
+  } else {
+    el.oauthLoginBox.classList.remove('hidden');
+    el.dashboard.classList.add('hidden');
+  }
+};
 
 el.startBtn.addEventListener('click', () => {
   growthRate = parseFloat(el.growthInput.value) || 3;
