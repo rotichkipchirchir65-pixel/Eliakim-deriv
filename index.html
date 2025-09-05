@@ -1,309 +1,188 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Eliakim WiFi Intelligence</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
-<script src="https://unpkg.com/html5-qrcode"></script>
-<style>
-:root { --bg:#0b0b0b; --fg:#00ffcc; --muted:#7adbc9; --accent:#32ff7e; --warn:#ff5c33; }
-body { background:var(--bg); color:var(--fg); font-family:ui-monospace, Menlo, monospace; margin:0; }
-header { padding:16px 20px; border-bottom:1px solid #1a1a1a; display:flex; align-items:center; gap:12px; }
-header h1 { margin:0; font-size:18px; letter-spacing:.5px; }
-main { padding:16px 20px; display:grid; gap:18px; max-width:1000px; margin:0 auto; }
-section { border:1px solid #1a1a1a; border-radius:10px; padding:14px; background:#0e0e0e; }
-h2 { margin:0 0 12px; font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; }
-.row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
-input, button { background:#121212; color:var(--fg); border:1px solid #222; padding:8px 10px; border-radius:8px; }
-button { cursor:pointer; }
-button.primary { background:linear-gradient(90deg, #0b3, #0aa); border:none; }
-.net { border-top:1px solid #1a1a1a; padding:10px 0; }
-.net:first-child { border-top:none; }
-.pill { padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid #1f1f1f; }
-.trusted { color:var(--accent); }
-.suspicious { color:var(--warn); }
-.muted { color:#8aa; }
-.pw { user-select:all; word-break:break-all; }
-#qrCanvas { margin-top:10px; }
-#reader { width: 320px; max-width:100%; }
-.grid2 { display:grid; grid-template-columns:1fr; gap:12px; }
-@media (min-width:760px){ .grid2 { grid-template-columns:1fr 1fr; } }
-</style>
+  <meta charset="UTF-8" />
+  <title>Eliakim WiFi Intelligence</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <style>
+    body { background: #0b0b0b; color: #00ffcc; font-family: monospace; margin: 0; padding: 20px; }
+    h1 { font-size: 20px; margin-bottom: 10px; }
+    section { margin-bottom: 30px; border: 1px solid #222; padding: 15px; border-radius: 10px; background: #111; }
+    input, button { background: #222; color: #00ffcc; border: 1px solid #333; padding: 8px; margin: 5px; border-radius: 6px; }
+    button:hover { background: #00ffcc; color: #000; }
+    .network { border-top: 1px solid #333; padding: 10px 0; }
+    .trusted { color: #32ff7e; }
+    .suspicious { color: #ff5c33; }
+    .muted { color: #7adbc9; }
+    .pw { user-select: all; word-break: break-word; }
+    canvas { margin-top: 10px; }
+    #reader { width: 300px; margin-top: 10px; }
+  </style>
 </head>
 <body>
-<header>
-  <h1>📡 Eliakim WiFi Intelligence</h1>
-  <span class="pill">Location-aware</span>
-  <span class="pill">Encrypted vault</span>
-  <span class="pill">QR sync</span>
-</header>
+  <h1>📡 Eliakim WiFi Intelligence Dashboard</h1>
 
-<main>
-  <!-- Location + Public DB -->
   <section>
-    <h2>Location and public WiFi</h2>
-    <div class="row">
-      <button class="primary" id="btnLocate">📍 Allow Location</button>
-      <span id="loc" class="muted">—</span>
-    </div>
-    <div id="locError" class="muted" style="margin-top:8px;"></div>
-    <div class="row" style="margin-top:8px">
-      <input id="radius" type="number" min="0.1" step="0.1" value="1.0" style="width:120px" />
-      <label for="radius" class="muted">km radius</label>
-      <button id="btnFetchPublic">Fetch public hotspots</button>
-    </div>
-    <div id="publicHotspots" style="margin-top:12px"></div>
+    <h2>📍 Location & Nearby Hotspots</h2>
+    <button onclick="getLocation()">Allow Location</button>
+    <span id="loc" class="muted">—</span>
+    <div id="locError" class="muted"></div>
+    <br>
+    <button onclick="fetchHotspots()">Fetch Public Hotspots</button>
+    <div id="hotspots"></div>
   </section>
 
-  <!-- Add / Import -->
-  <section class="grid2">
-    <div>
-      <h2>Add or import credentials</h2>
-      <div class="row">
-        <input id="ssid" placeholder="SSID" />
-        <input id="password" placeholder="Password" />
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button id="btnSave" class="primary">Save</button>
-        <button id="btnQRGen">Generate QR</button>
-      </div>
-      <canvas id="qrCanvas" width="220" height="220"></canvas>
-    </div>
-    <div>
-      <h2>Scan QR to import</h2>
-      <div id="reader"></div>
-      <div class="row" style="margin-top:8px">
-        <button id="btnScan">Start scanner</button>
-        <button id="btnStop">Stop scanner</button>
-      </div>
-    </div>
+  <section>
+    <h2>🔑 Add WiFi Credentials</h2>
+    <input id="ssid" placeholder="SSID" />
+    <input id="password" placeholder="Password" />
+    <button onclick="savePassword()">Save</button>
+    <button onclick="generateQR()">Generate QR</button>
+    <canvas id="qrCanvas"></canvas>
   </section>
 
-  <!-- Vault -->
   <section>
-    <h2>Vault</h2>
-    <div class="row" style="margin-bottom:8px">
-      <input id="vaultPass" type="password" placeholder="Vault passphrase" />
-      <button id="btnUnlock" class="primary">Unlock vault</button>
-      <span id="vaultState" class="muted">Locked</span>
-    </div>
+    <h2>📷 Scan QR to Import</h2>
+    <div id="reader"></div>
+    <button onclick="startScanner()">Start Scanner</button>
+    <button onclick="stopScanner()">Stop Scanner</button>
+  </section>
+
+  <section>
+    <h2>🔐 Vault</h2>
+    <input id="vaultPass" type="password" placeholder="Vault passphrase" />
+    <button onclick="unlockVault()">Unlock Vault</button>
+    <span id="vaultState" class="muted">Locked</span>
     <div id="vault"></div>
   </section>
-</main>
 
-<audio id="drill" src="drill-remix.mp3" preload="auto"></audio>
+  <script>
+    const storeKey = "eliakim.wifi.vault";
+    let vault = [];
+    let html5QrCode = null;
+    let lastPos = null;
 
-<script>
-// === Utils ===
-const storeKey = "eliakim.wifi.v1";
-let vault = [];
-let html5QrCode = null;
-function bytesB64(bytes){ return btoa(String.fromCharCode(...new Uint8Array(bytes))); }
-function b64Bytes(b64){ return Uint8Array.from(atob(b64), c=>c.charCodeAt(0)); }
-function playBeat(){ const a=document.getElementById("drill"); a.currentTime=0; a.play().catch(()=>{}); }
-
-// === Crypto ===
-async function deriveKey(pass, salt){
-  const enc = new TextEncoder();
-  const mat = await crypto.subtle.importKey("raw", enc.encode(pass), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey({name:"PBKDF2", salt, iterations:120000, hash:"SHA-256"},
-    mat, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]);
-}
-async function encryptVault(pass, data){
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveKey(pass, salt);
-  const ct = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, new TextEncoder().encode(JSON.stringify(data)));
-  return { salt: bytesB64(salt), iv: bytesB64(iv), ct: bytesB64(ct) };
-}
-async function decryptVault(pass, payload){
-  const key = await deriveKey(pass, b64Bytes(payload.salt));
-  const pt = await crypto.subtle.decrypt({name:"AES-GCM", iv:b64Bytes(payload.iv)}, key, b64Bytes(payload.ct));
-  return JSON.parse(new TextDecoder().decode(pt));
-}
-function saveEnc(p){ localStorage.setItem(storeKey, JSON.stringify(p)); }
-function loadEnc(){ const r=localStorage.getItem(storeKey); return r?JSON.parse(r):null; }
-
-// === Vault UI ===
-async function persistVault(){
-  const pass = document.getElementById("vaultPass").value;
-  if(!pass){ alert("Set a vault passphrase first."); return; }
-  const enc = await encryptVault(pass, vault);
-  saveEnc(enc);
-}
-function renderVault(){
-  const c = document.getElementById("vault");
-  if(!vault.length){ c.innerHTML = '<div class="muted">Vault empty or locked.</div>'; return; }
-  c.innerHTML = vault.map(v=>`
-    <div class="net">
-      <div class="row" style="justify-content:space-between">
-        <div><strong>${v.ssid}</strong> <span class="pill trusted">stored</span></div>
-        <div class="row">
-          <button onclick="copyPw('${encodeURIComponent(v.ssid)}')">Copy</button>
-          <button onclick="genWiFiQR('${encodeURIComponent(v.ssid)}')">QR</button>
-          <button onclick="removeEntry('${encodeURIComponent(v.ssid)}')">Remove</button>
-        </div>
-      </div>
-      <div class="pw muted" id="pw-${encodeURIComponent(v.ssid)}">${v.password}</div>
-      </div>
-    </div>
-  `).join("");
-}
-
-// === Vault actions ===
-window.copyPw = async (ssidEnc)=>{
-  const ssid = decodeURIComponent(ssidEnc);
-  const pw = document.getElementById(`pw-${ssidEnc}`).textContent;
-  await navigator.clipboard.writeText(pw);
-  alert(`Copied password for ${ssid}`);
-};
-window.genWiFiQR = (ssidEnc)=>{
-  const ssid = decodeURIComponent(ssidEnc);
-  const pw = document.getElementById(`pw-${ssidEnc}`).textContent;
-  const scheme = `WIFI:T:WPA;S:${ssid};P:${pw};;`;
-  QRCode.toCanvas(document.getElementById("qrCanvas"), scheme, { color:{dark:"#00ffcc", light:"#0b0b0b"}, width:220 });
-};
-window.removeEntry = async (ssidEnc)=>{
-  const ssid = decodeURIComponent(ssidEnc);
-  vault = vault.filter(x=>x.ssid!==ssid);
-  await persistVault(); renderVault();
-};
-
-// === Add / QR ===
-document.getElementById("btnSave").addEventListener("click", async ()=>{
-  const ssid = document.getElementById("ssid").value.trim();
-  const password = document.getElementById("password").value.trim();
-  if(!ssid || !password) return;
-  const ex = vault.find(x=>x.ssid===ssid);
-  if(ex) ex.password=password; else vault.push({ssid, password});
-  await persistVault(); renderVault(); playBeat();
-});
-document.getElementById("btnQRGen").addEventListener("click", ()=>{
-  const ssid = document.getElementById("ssid").value.trim();
-  const password = document.getElementById("password").value.trim();
-  if(!ssid || !password) return;
-  const payload = btoa(JSON.stringify({ssid, password}));
-  QRCode.toCanvas(document.getElementById("qrCanvas"), payload, { color:{dark:"#00ffcc", light:"#0b0b0b"}, width:220 });
-});
-document.getElementById("btnScan").addEventListener("click", async ()=>{
-  if(html5QrCode) return;
-  html5QrCode = new Html5Qrcode("reader");
-  await html5QrCode.start({ facingMode:"environment" }, { fps:10, qrbox:250 },
-    async (text)=>{
-      try{
-        if(text.startsWith("WIFI:")){
-          const parts = text.replace(/^WIFI:/,'').split(';').filter(Boolean);
-          const obj={}; parts.forEach(p=>{ const [k,...v]=p.split(':'); obj[k]=v.join(':'); });
-          const ssid=obj.S, password=obj.P||"";
-          if(ssid && password){ upsert(ssid,password); }
+    function getLocation() {
+      navigator.permissions.query({ name: 'geolocation' }).then(result => {
+        if (result.state === 'denied') {
+          document.getElementById("locError").innerHTML = "Location blocked. Enable it in browser settings.";
         } else {
-          const data = JSON.parse(atob(text));
-          upsert(data.ssid, data.password);
+          navigator.geolocation.getCurrentPosition(pos => {
+            lastPos = pos.coords;
+            document.getElementById("loc").textContent = `📍 ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`;
+            document.getElementById("locError").textContent = "";
+          }, err => {
+            document.getElementById("locError").textContent = "Location error: " + err.message;
+          });
         }
-      }catch(_){}
-    });
-});
-document.getElementById("btnStop").addEventListener("click", ()=>{
-  if(!html5QrCode) return;
-  html5QrCode.stop().then(()=>{ html5QrCode.clear(); html5QrCode=null; });
-});
-async function upsert(ssid,password){
-  const ex=vault.find(x=>x.ssid===ssid);
-  if(ex) ex.password=password; else vault.push({ssid,password});
-  await persistVault(); renderVault(); playBeat();
-}
-
-// === Location + public DB ===
-let lastPos=null;
-document.getElementById("btnLocate").addEventListener("click", ()=>{
-  if(!navigator.geolocation){
-    document.getElementById("locError").textContent = "Geolocation not supported.";
-    return;
-  }
-  navigator.permissions.query({ name: 'geolocation' }).then(function(result) {
-    if (result.state === 'denied') {
-      document.getElementById("locError").innerHTML =
-        "Location is blocked. Enable it in your browser/site settings, then reload.";
-    } else {
-      navigator.geolocation.getCurrentPosition(
-        pos=>{
-          lastPos=pos.coords;
-          document.getElementById("loc").textContent =
-            `📍 ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`;
-          document.getElementById("locError").textContent = "";
-        },
-        err=>{
-          if (err.code === err.PERMISSION_DENIED) {
-            document.getElementById("locError").innerHTML =
-              "Location access denied. Enable it in settings and reload.";
-          } else if (err.code === err.POSITION_UNAVAILABLE) {
-            document.getElementById("locError").textContent = "Location unavailable. Try again.";
-          } else if (err.code === err.TIMEOUT) {
-            document.getElementById("locError").textContent = "Location request timed out.";
-          }
-        },
-        { enableHighAccuracy: true, timeout: 10000 }
-      );
+      });
     }
-  });
-});
 
-document.getElementById("btnFetchPublic").addEventListener("click", async ()=>{
-  if(!lastPos){ alert("Get location first"); return; }
-  const km = parseFloat(document.getElementById("radius").value||"1.0");
-  const box = document.getElementById("publicHotspots");
-  box.innerHTML = '<div class="muted">Loading…</div>';
-  try{
-    // Replace with your backend/public WiFi API
-    // const data = await (await fetch(`/api/public-wifi?lat=${lastPos.latitude}&lon=${lastPos.longitude}&radius_km=${km}`)).json();
-    const data = [
-      { ssid:"NandiHub_Free", security:"Open", strength:-55, shared:true, password:"" },
-      { ssid:"Chemundu_Public_Share", security:"WPA2", strength:-62, shared:true, password:"guest2025" }
-    ];
-    box.innerHTML = data.map(n=>{
-      const trusted = n.shared && (n.password || n.security==="Open");
-      const badge = trusted ? 'trusted' : 'suspicious';
-      return `
-        <div class="net">
-          <div class="row" style="justify-content:space-between">
-            <div>
-              <strong>${n.ssid}</strong>
-              <span class="pill ${badge}">${trusted?'shared':'unknown'}</span>
-              <span class="muted">(${n.security}, ${n.strength} dBm)</span>
-            </div>
-            <div class="row">
-              ${n.password ? `<button onclick="addPublic('${encodeURIComponent(n.ssid)}','${encodeURIComponent(n.password)}')">Add to vault</button>` : ''}
-              <button onclick="genSharedWiFiQR('${encodeURIComponent(n.ssid)}','${encodeURIComponent(n.password||"")}','${n.security}')">QR</button>
-            </div>
-          </div>
-          ${n.password ? `<div class="pw muted">Password: ${n.password}</div>` : `<div class="pw muted">No password required or not provided</div>`}
+    function fetchHotspots() {
+      const box = document.getElementById("hotspots");
+      box.innerHTML = "<div class='muted'>Loading…</div>";
+      const demo = [
+        { ssid: "NandiHub_Free", security: "Open", strength: -55, password: "" },
+        { ssid: "Chemundu_School", security: "WPA2", strength: -62, password: "school2025" }
+      ];
+      box.innerHTML = demo.map(n => `
+        <div class="network">
+          <strong>${n.ssid}</strong> <span class="${n.password ? 'trusted' : 'suspicious'}">(${n.security}, ${n.strength} dBm)</span><br>
+          ${n.password ? `<span class="pw">${n.password}</span> <button onclick="copy('${n.password}')">Copy</button>` : `<span class="muted">No password</span>`}
         </div>
-      `;
-    }).join("");
-  }catch(e){
-    box.innerHTML = '<div class="muted">Failed to fetch public hotspots.</div>';
-  }
-});
-window.addPublic = (ssidEnc, pwEnc)=> upsert(decodeURIComponent(ssidEnc), decodeURIComponent(pwEnc));
-window.genSharedWiFiQR = (ssidEnc, pwEnc, sec)=>{
-  const ssid=decodeURIComponent(ssidEnc); const pw=decodeURIComponent(pwEnc);
-  const type=(sec && sec.toUpperCase().includes("WPA"))?"WPA":"nopass";
-  const scheme=`WIFI:T:${type};S:${ssid};P:${pw};;`;
-  QRCode.toCanvas(document.getElementById("qrCanvas"), scheme, { color:{dark:"#00ffcc", light:"#0b0b0b"}, width:220 });
-};
+      `).join("");
+    }
 
-// === Unlock init ===
-document.getElementById("btnUnlock").addEventListener("click", async ()=>{
-  const pass = document.getElementById("vaultPass").value;
-  const enc = loadEnc();
-  if(!enc){ vault=[]; document.getElementById("vaultState").textContent="Unlocked (new)"; renderVault(); return; }
-  try{ vault = await decryptVault(pass, enc); document.getElementById("vaultState").textContent="Unlocked"; renderVault(); }
-  catch{ document.getElementById("vaultState").textContent="Unlock failed"; }
-});
+    function copy(text) {
+      navigator.clipboard.writeText(text).then(() => alert("Copied to clipboard"));
+    }
 
-// First paint
-renderVault();
-</script>
+    function savePassword() {
+      const ssid = document.getElementById("ssid").value.trim();
+      const password = document.getElementById("password").value.trim();
+      if (!ssid || !password) return;
+      const existing = vault.find(v => v.ssid === ssid);
+      if (existing) existing.password = password;
+      else vault.push({ ssid, password });
+      persistVault(); renderVault();
+    }
+
+    function generateQR() {
+      const ssid = document.getElementById("ssid").value.trim();
+      const password = document.getElementById("password").value.trim();
+      if (!ssid || !password) return;
+      const payload = btoa(JSON.stringify({ ssid, password }));
+      QRCode.toCanvas(document.getElementById("qrCanvas"), payload, { color: { dark: "#00ffcc", light: "#0b0b0b" }, width: 200 });
+    }
+
+    function startScanner() {
+      if (html5QrCode) return;
+      html5QrCode = new Html5Qrcode("reader");
+      html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, text => {
+        try {
+          const data = JSON.parse(atob(text));
+          const existing = vault.find(v => v.ssid === data.ssid);
+          if (existing) existing.password = data.password;
+          else vault.push({ ssid: data.ssid, password: data.password });
+          persistVault(); renderVault();
+        } catch (e) {}
+      });
+    }
+
+    function stopScanner() {
+      if (!html5QrCode) return;
+      html5QrCode.stop().then(() => { html5QrCode.clear(); html5QrCode = null; });
+    }
+
+    function renderVault() {
+      const box = document.getElementById("vault");
+      if (!vault.length) {
+        box.innerHTML = "<div class='muted'>Vault is empty.</div>";
+        return;
+      }
+      box.innerHTML = vault.map(v => `
+        <div class="network">
+          <strong>${v.ssid}</strong><br>
+          <span class="pw" id="pw-${v.ssid}">${v.password}</span>
+          <button onclick="copy('${v.password}')">Copy</button>
+        </div>
+      `).join("");
+    }
+
+    async function persistVault() {
+      const pass = document.getElementById("vaultPass").value;
+      if (!pass) return alert("Set a vault passphrase first.");
+      const enc = new TextEncoder().encode(JSON.stringify(vault));
+      const key = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pass));
+      const encrypted = enc.map((b, i) => b ^ new Uint8Array(key)[i % 32]);
+      localStorage.setItem(storeKey, btoa(String.fromCharCode(...encrypted)));
+    }
+
+    async function unlockVault() {
+      const pass = document.getElementById("vaultPass").value;
+      const raw = localStorage.getItem(storeKey);
+      if (!raw) {
+        vault = [];
+        document.getElementById("vaultState").textContent = "Unlocked (new)";
+        renderVault();
+        return;
+      }
+      try {
+        const encrypted = Uint8Array.from(atob(raw), c => c.charCodeAt(0));
+        const key = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pass));
+        const decrypted = encrypted.map((b, i) => b ^ new Uint8Array(key)[i % 32]);
+        vault = JSON.parse(new TextDecoder().decode(decrypted));
+        document.getElementById("vaultState").textContent = "Unlocked";
+        renderVault();
+      } catch (e) {
+        document.getElementById("vaultState").textContent = "Unlock failed";
+      }
+    }
+
+    // Initial vault render
+    renderVault();
+  </script>
 </body>
 </html>
